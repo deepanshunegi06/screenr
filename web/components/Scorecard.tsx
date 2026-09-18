@@ -20,6 +20,7 @@ const STOP_LABEL: Record<string, string> = {
   duration_cap: "Time limit reached",
   turn_cap: "Turn limit reached",
   candidate_ended: "Candidate ended it",
+  removed: "Ended after repeated warnings",
   incomplete: "Closed by recruiter",
 };
 
@@ -32,6 +33,11 @@ const DECISION_LABEL: Record<Decision, string> = {
 // Plain words for the recruiter. The raw kind is a machine label.
 const INTEGRITY_LABEL: Record<string, string> = {
   tab_hidden: "Switched away from the interview",
+  window_blur: "Focus moved to another window",
+  fullscreen_exit: "Left full screen",
+  paste: "Pasted text",
+  second_screen: "A second display was connected",
+  audio_device_changed: "Audio device changed",
   no_face: "No one in frame",
   multiple_faces: "More than one person in frame",
   looking_away: "Looked away from the screen",

@@ -27,6 +27,7 @@ StopReason = Literal[
     "duration_cap",
     "turn_cap",
     "candidate_ended",
+    "removed",
     "incomplete",
 ]
 

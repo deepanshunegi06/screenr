@@ -21,9 +21,18 @@ should look.
 
 ## Decision
 
-Two sources, both in the candidate's browser: tab or window switches of three
-seconds or more, and — only if the candidate opts in — face presence and head
-position from MediaPipe's face landmarker running on their device.
+Two sources, both in the candidate's browser.
+
+Always on: leaving the interview window. Tab switches, another window taking
+focus, and exiting full screen each spend one of three warnings; the third ends
+the interview. Pastes, a second display, and a mid-interview audio device change
+are recorded as notes and spend nothing.
+
+Opt-in: face presence and head position from MediaPipe's face landmarker,
+running on the candidate's device.
+
+Ending an interview is not judging one. The scorecard records that it ended this
+way; every decision about the candidate is still a person's.
 
 Enforced boundaries:
 
@@ -66,9 +75,15 @@ make several of these easy to compute. They are left out because they measure ho
 a person behaves rather than what they said, and they fall hardest on
 neurodivergent and disabled candidates. None would improve a hiring decision.
 
+Speaker diarization was tried and is not available: Deepgram's Voice Agent
+rejects `diarize` and `multichannel` on the listen provider, so a second person
+feeding answers cannot be detected from the audio on this path. Rather than ship
+a heuristic dressed up as detection, it is left out and said plainly here.
+
 No browser-side proctoring survives a phone propped beside the laptop. Anything
 claiming to prevent cheating is overselling; these signals only narrow where a
-human should look.
+human should look. The strongest check in this product is not in this file — it
+is the agent asking an unscripted follow-up about the candidate's own claim.
 
 ## Consequences
 

@@ -37,10 +37,18 @@ FORWARDED = {
 }
 
 # Integrity events the browser may report. Anything else is dropped.
-INTEGRITY_KINDS = {"tab_hidden", "no_face", "multiple_faces", "looking_away", "camera_lost"}
-
-# How long the closing line gets before the socket is torn down regardless.
-END_GRACE_SECONDS = 8.0
+INTEGRITY_KINDS = {
+    "tab_hidden",
+    "window_blur",
+    "fullscreen_exit",
+    "paste",
+    "second_screen",
+    "no_face",
+    "multiple_faces",
+    "looking_away",
+    "camera_lost",
+    "audio_device_changed",
+}
 
 # Newest connection wins. A second tab or a reload whose old socket has not
 # closed yet would otherwise run two agents against one interview.
@@ -152,7 +160,7 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
                 continue
 
             if (text := message.get("text")) is not None:
-                await _handle_browser_text(dg, session, text)
+                await _handle_browser_text(dg, session, text, socket)
 
             if session.ctx.is_finished() and not dg.open:
                 break
@@ -169,13 +177,9 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
             await socket.close()
 
 
-async def _close_after(dg: DeepgramInterview, seconds: float) -> None:
-    await asyncio.sleep(seconds)
-    if dg.open:
-        await dg.close()
-
-
-async def _handle_browser_text(dg: DeepgramInterview, session: store.Session, raw: str) -> None:
+async def _handle_browser_text(
+    dg: DeepgramInterview, session: store.Session, raw: str, socket: WebSocket
+) -> None:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -190,10 +194,11 @@ async def _handle_browser_text(dg: DeepgramInterview, session: store.Session, ra
             await dg.inject_text(answer)
 
     elif kind == "End":
-        await dg.request_end()
-        # The pump normally notices and tells the browser. If Deepgram has gone
-        # quiet, close anyway rather than leaving them staring at a live screen.
-        asyncio.create_task(_close_after(dg, END_GRACE_SECONDS))
+        # "removed" when the warning limit was reached, "candidate_ended" when
+        # they chose to stop. Either way the answer to the browser is immediate.
+        reason = "removed" if payload.get("reason") == "violations" else "candidate_ended"
+        await dg.request_end(reason)
+        await _send_safely(socket, {"type": "Finished", "reason": reason})
 
     elif kind == "Integrity":
         flag_kind = str(payload.get("kind", ""))

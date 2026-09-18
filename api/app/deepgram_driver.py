@@ -251,28 +251,16 @@ class DeepgramInterview:
                 self._idle.clear()
                 self._last_frame = time.monotonic()
 
-    async def request_end(self) -> None:
-        """The candidate chose to stop. Close warmly, but promptly.
+    async def request_end(self, reason: str = "candidate_ended") -> None:
+        """End now. Not after a closing line, not after a timeout -- now.
 
-        Deepgram refuses an injected message while the agent is mid-utterance, so
-        a closing line is best-effort. What is not optional is that the interview
-        is over the moment they ask: the stop reason is set first, and the pump
-        exits on its next frame or when the closing line finishes, whichever is
-        sooner.
+        Whoever asked has already decided: the candidate pressed the button, or
+        the warning limit was reached. Making them watch a spinner while a
+        courtesy sentence plays is the one thing this must not do. The socket is
+        closed immediately and the caller tells the browser.
         """
-        finish(self.session, "candidate_ended")
-        self._idle.clear()
-        spoke = await self._send(
-            {
-                "type": "InjectAgentMessage",
-                "content": (
-                    "Of course -- we can stop here. Thanks for your time today; "
-                    "someone from the team will be in touch about next steps."
-                ),
-            }
-        )
-        if not spoke:
-            self._idle.set()
+        finish(self.session, reason)
+        await self.close()
 
     # --- output ------------------------------------------------------------------
 

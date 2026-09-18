@@ -69,7 +69,17 @@ export type ProctorEvent = {
   detail: string;
 };
 
-export type ProctorHandle = { stop: () => void };
+/** Live state for the interface: whether a face is there right now, and whether
+ *  they are currently turned away. Distinct from the events, which only fire once
+ *  a condition has persisted. */
+export type ProctorStatus = { faces: number; away: boolean; calibrated: boolean };
+
+export type ProctorHandle = {
+  stop: () => void;
+  /** The same camera the checks read. The room binds its own <video> to this so
+   *  the candidate sees exactly what is being looked at. */
+  stream: MediaStream;
+};
 
 type Point = { x: number; y: number };
 
@@ -97,7 +107,10 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
-export async function startProctoring(onEvent: (event: ProctorEvent) => void): Promise<ProctorHandle> {
+export async function startProctoring(
+  onEvent: (event: ProctorEvent) => void,
+  onStatus?: (status: ProctorStatus) => void,
+): Promise<ProctorHandle> {
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { width: 480, height: 360, facingMode: "user" },
   });
@@ -106,9 +119,13 @@ export async function startProctoring(onEvent: (event: ProctorEvent) => void): P
   video.srcObject = stream;
   video.muted = true;
   video.playsInline = true;
-  // Deliberately not shown: the candidate does not need to watch themselves, and
-  // a preview invites people to perform for the camera.
-  video.style.display = "none";
+  // This element exists only to feed the detector. The visible self-view is a
+  // separate <video> bound to the same stream, so nothing has to move around the
+  // DOM mid-interview.
+  video.style.position = "fixed";
+  video.style.left = "-9999px";
+  video.style.width = "1px";
+  video.style.height = "1px";
   document.body.appendChild(video);
   await video.play();
 
@@ -153,6 +170,8 @@ export async function startProctoring(onEvent: (event: ProctorEvent) => void): P
     }
 
     const faces = result.faceLandmarks?.length ?? 0;
+
+    onStatus?.({ faces, away: awaySince > 0, calibrated: baseline !== null });
 
     if (faces === 0) {
       awaySince = 0;
@@ -211,6 +230,7 @@ export async function startProctoring(onEvent: (event: ProctorEvent) => void): P
   }, SAMPLE_MS);
 
   return {
+    stream,
     stop: () => {
       stopped = true;
       clearInterval(timer);

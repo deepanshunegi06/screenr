@@ -5,6 +5,7 @@ import { use, useEffect, useState } from "react";
 import { InterviewRoom } from "@/components/InterviewRoom";
 import { Button, Card, Logo, Skeleton } from "@/components/ui";
 import { AgentVoice } from "@/lib/audio";
+import { enterFullscreen } from "@/lib/integrity";
 import { api, type InterviewIntro } from "@/lib/api";
 
 type Stage = "loading" | "invalid" | "consent" | "live" | "done";
@@ -71,6 +72,9 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
         intro={intro}
         onStart={async (cameraChecks) => {
           await voice.unlock();
+          // Must happen inside the click: browsers only grant fullscreen from a
+          // user gesture. Refusal is not fatal -- leaving it simply costs a warning.
+          await enterFullscreen();
           setProctoring(cameraChecks);
           setStage("live");
         }}
@@ -159,6 +163,15 @@ function Consent({
           Say &quot;I don&apos;t know&quot; when you don&apos;t. Honesty scores better than a confident guess.
         </li>
       </ol>
+
+      <div className="mt-5 rounded-md border border-border bg-surface-2/60 p-3">
+        <div className="text-[13px] font-medium text-fg">Before you start</div>
+        <p className="mt-1 text-[13px] leading-relaxed text-fg-2">
+          The interview opens in full screen. Leaving full screen, switching tabs, or moving to
+          another window each gives you a warning — after three, the interview ends and a person
+          reviews whatever was recorded up to that point.
+        </p>
+      </div>
 
       <label className="mt-6 flex cursor-pointer gap-3 rounded-md border border-border bg-surface-2/50 p-3">
         <input

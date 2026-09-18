@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ProctorPanel } from "@/components/ProctorPanel";
 import { Badge, Button, Logo, Textarea } from "@/components/ui";
+import { Wrapping } from "@/components/Wrapping";
 import { AgentVoice, startMicrophone, type MicHandle } from "@/lib/audio";
-import { startProctoring, type ProctorHandle } from "@/lib/proctor";
+import { exitFullscreen, watchIntegrity, type IntegrityWatch } from "@/lib/integrity";
+import { startProctoring, type ProctorHandle, type ProctorStatus } from "@/lib/proctor";
 import { api, mmss, wsUrl } from "@/lib/api";
 
 type Line = { speaker: "agent" | "you"; text: string; tools?: string[] };
@@ -29,6 +32,8 @@ const TOOL_LABEL: Record<string, string> = {
   escalate_to_human: "Flagging for a reviewer",
 };
 
+const MAX_WARNINGS = 3;
+
 export function InterviewRoom({
   token,
   candidate,
@@ -42,7 +47,7 @@ export function InterviewRoom({
   maxMinutes: number;
   /** Created and unlocked inside the Start click, so autoplay policy is satisfied. */
   voice: AgentVoice;
-  /** The candidate opted in to on-device camera presence checks. */
+  /** The candidate opted in to on-device camera checks. */
   cameraChecks: boolean;
   onFinished: () => void;
 }) {
@@ -57,13 +62,21 @@ export function InterviewRoom({
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [pendingTools, setPendingTools] = useState<string[]>([]);
   const [attempt, setAttempt] = useState(0);
+  const [warnings, setWarnings] = useState(0);
+  const [warning, setWarning] = useState<{ text: string; count: number } | null>(null);
+  const [removed, setRemoved] = useState(false);
+  const [proctorStatus, setProctorStatus] = useState<ProctorStatus | null>(null);
+  const [proctorStream, setProctorStream] = useState<MediaStream | null>(null);
 
   const socket = useRef<WebSocket | null>(null);
   const mic = useRef<MicHandle | null>(null);
   const proctor = useRef<ProctorHandle | null>(null);
+  const integrity = useRef<IntegrityWatch | null>(null);
   const meter = useRef<ReturnType<typeof setInterval> | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const warningsRef = useRef(0);
+  const endedRef = useRef(false);
   const onFinishedRef = useRef(onFinished);
   useEffect(() => {
     onFinishedRef.current = onFinished;
@@ -77,6 +90,7 @@ export function InterviewRoom({
   const stopProctor = useCallback(() => {
     proctor.current?.stop();
     proctor.current = null;
+    setProctorStream(null);
   }, []);
 
   const stopMic = useCallback(() => {
@@ -96,29 +110,59 @@ export function InterviewRoom({
     meter.current = setInterval(() => setBins(new Uint8Array(handle.bins())), 80);
   }, []);
 
+  /** Shut everything down and show the wrapping screen. Every exit goes through
+   *  here: the candidate's own choice, the warning limit, or the agent finishing. */
+  const finishUp = useCallback(
+    (reason?: "violations") => {
+      if (endedRef.current) return;
+      endedRef.current = true;
+      if (reason) setRemoved(true);
+      send({ type: "End", reason });
+      setPhase("ending");
+      stopMic();
+      stopProctor();
+      integrity.current?.stop();
+      integrity.current = null;
+      void exitFullscreen();
+      // The server answers immediately now, but the candidate should never be
+      // stuck on this screen if it does not.
+      setTimeout(() => setPhase((p) => (p === "ending" ? "ended" : p)), 6000);
+    },
+    [send, stopMic, stopProctor],
+  );
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [lines, phase, pendingTools]);
 
-  // Tab switches are reported for a human to read. They are not scored.
-  useEffect(() => {
-    let hiddenAt = 0;
-    const onVisibility = () => {
-      if (document.hidden) {
-        hiddenAt = Date.now();
-      } else if (hiddenAt) {
-        const seconds = Math.round((Date.now() - hiddenAt) / 1000);
-        if (seconds >= 3) send({ type: "Integrity", kind: "tab_hidden", detail: `Switched away for ${seconds}s` });
-        hiddenAt = 0;
+  /** A violation spends a warning; the last one ends the interview. Notes never
+   *  spend anything -- they are only context for whoever reads the transcript. */
+  const handleSignal = useCallback(
+    (kind: string, detail: string, violation: boolean) => {
+      if (endedRef.current) return;
+      send({ type: "Integrity", kind, detail });
+      if (!violation) return;
+
+      const count = warningsRef.current + 1;
+      warningsRef.current = count;
+      setWarnings(count);
+
+      if (count >= MAX_WARNINGS) {
+        setWarning({ text: "that was the last warning, so the interview has ended.", count });
+        finishUp("violations");
+        return;
       }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [send]);
+      setWarning({
+        text: `${detail.toLowerCase()}. Stay in this window for the rest of the interview.`,
+        count,
+      });
+      setTimeout(() => setWarning(null), 6000);
+    },
+    [send, finishUp],
+  );
 
   useEffect(() => {
     let cancelled = false;
-    let finishTimer: ReturnType<typeof setTimeout> | null = null;
     let openTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function begin() {
@@ -139,6 +183,7 @@ export function InterviewRoom({
           setElapsed(state.elapsedSeconds ?? 0);
         }
         if (state.finished) {
+          endedRef.current = true;
           setPhase("ended");
           return;
         }
@@ -153,7 +198,7 @@ export function InterviewRoom({
       ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
           voice.play(event.data);
-          setPhase((p) => (p === "ended" || p === "failed" ? p : "speaking"));
+          setPhase((p) => (p === "ended" || p === "failed" || p === "ending" ? p : "speaking"));
           return;
         }
         const frame = JSON.parse(event.data);
@@ -182,22 +227,24 @@ export function InterviewRoom({
             break;
           case "UserStartedSpeaking":
             voice.interrupt();
-            setPhase("listening");
+            setPhase((p) => (p === "ending" || p === "ended" ? p : "listening"));
             break;
           case "AgentThinking":
-            setPhase("thinking");
+            setPhase((p) => (p === "ending" || p === "ended" ? p : "thinking"));
             break;
           case "AgentAudioDone":
-            setPhase("listening");
+            setPhase((p) => (p === "ending" || p === "ended" ? p : "listening"));
             break;
           case "Finished":
+            endedRef.current = true;
+            if (frame.reason === "removed") setRemoved(true);
             setPhase("ended");
             stopMic();
             stopProctor();
-            finishTimer = setTimeout(() => onFinishedRef.current(), 2600);
+            void exitFullscreen();
             break;
           case "Rejected":
-            setProblem(frame.reason ?? "Couldn&apos;t start the interview.");
+            setProblem(frame.reason ?? "Couldn't start the interview.");
             setPhase("failed");
             break;
           case "Error":
@@ -208,10 +255,10 @@ export function InterviewRoom({
       };
 
       ws.onerror = () => {
-        setPhase((p) => (p === "ended" ? p : "failed"));
+        setPhase((p) => (p === "ended" || p === "ending" ? p : "failed"));
         setProblem("The connection dropped.");
       };
-      ws.onclose = () => setPhase((p) => (p === "ended" ? p : "failed"));
+      ws.onclose = () => setPhase((p) => (p === "ended" || p === "ending" ? p : "failed"));
 
       try {
         await new Promise<void>((resolve, reject) => {
@@ -229,6 +276,10 @@ export function InterviewRoom({
       }
       if (cancelled) return;
 
+      integrity.current = watchIntegrity((signal) =>
+        handleSignal(signal.kind, signal.detail, signal.violation),
+      );
+
       // Microphone failure is not a connection failure: the socket is fine and
       // the candidate can type.
       try {
@@ -245,11 +296,15 @@ export function InterviewRoom({
       // the model will not load, the interview carries on unproctored.
       if (cameraChecks && !cancelled) {
         try {
-          const handle = await startProctoring((event) =>
-            send({ type: "Integrity", kind: event.kind, detail: event.detail }),
+          const handle = await startProctoring(
+            (event) => send({ type: "Integrity", kind: event.kind, detail: event.detail }),
+            setProctorStatus,
           );
           if (cancelled) handle.stop();
-          else proctor.current = handle;
+          else {
+            proctor.current = handle;
+            setProctorStream(handle.stream);
+          }
         } catch {
           // Nothing to tell the candidate: declining changes nothing for them.
         }
@@ -260,12 +315,13 @@ export function InterviewRoom({
 
     return () => {
       cancelled = true;
-      if (finishTimer) clearTimeout(finishTimer);
       if (openTimer) clearTimeout(openTimer);
       if (timer.current) clearInterval(timer.current);
       timer.current = null;
       stopMic();
       stopProctor();
+      integrity.current?.stop();
+      integrity.current = null;
       const ws = socket.current;
       if (ws) {
         ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
@@ -273,7 +329,7 @@ export function InterviewRoom({
       }
       socket.current = null;
     };
-  }, [token, voice, attempt, cameraChecks, send, startMic, stopMic, stopProctor]);
+  }, [token, voice, attempt, cameraChecks, send, startMic, stopMic, stopProctor, handleSignal]);
 
   const sendTyped = useCallback(() => {
     const answer = draft.trim();
@@ -306,42 +362,63 @@ export function InterviewRoom({
       setTimeout(() => setConfirmEnd(false), 5000);
       return;
     }
-    send({ type: "End" });
     setConfirmEnd(false);
-    stopMic();
-    stopProctor();
-    // The server sends Finished once the closing line has played. Show the
-    // wrapping-up state immediately so the button is never clicked twice, and
-    // end anyway if that frame never arrives.
-    setPhase("ending");
-    setTimeout(() => setPhase((p) => (p === "ending" ? "ended" : p)), 12000);
-  }, [confirmEnd, send, stopMic, stopProctor]);
+    finishUp();
+  }, [confirmEnd, finishUp]);
 
   const live = phase !== "ending" && phase !== "ended" && phase !== "failed";
   const remaining = Math.max(0, maxMinutes * 60 - elapsed);
   const progress = Math.min(100, (elapsed / (maxMinutes * 60)) * 100);
 
+  if (phase === "ending" || phase === "ended") {
+    return (
+      <div className="flex min-h-dvh flex-col bg-bg">
+        <header className="border-b border-border bg-surface">
+          <div className="mx-auto flex h-12 w-full max-w-[860px] items-center px-4">
+            <Logo />
+          </div>
+        </header>
+        <Wrapping done={phase === "ended"} removed={removed} />
+        {phase === "ended" && (
+          <div className="pb-12 text-center">
+            <Button onClick={() => onFinishedRef.current()}>Close</Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
+      {warning && (
+        <div
+          role="alert"
+          className={`sticky top-0 z-20 px-4 py-2.5 text-center text-[14px] font-medium text-white ${
+            warning.count >= MAX_WARNINGS ? "bg-bad" : "bg-warn"
+          }`}
+        >
+          Warning {Math.min(warning.count, MAX_WARNINGS)} of {MAX_WARNINGS} — {warning.text}
+        </div>
+      )}
+
       <header className="sticky top-0 z-10 border-b border-border bg-surface">
-        <div className="mx-auto flex h-12 w-full max-w-[720px] items-center justify-between px-4">
+        <div className="mx-auto flex h-12 w-full max-w-[860px] items-center justify-between px-4">
           <Logo />
           <div className="flex items-center gap-4">
+            {warnings > 0 && (
+              <span className="text-[12px] font-medium text-warn">
+                {warnings}/{MAX_WARNINGS} warnings
+              </span>
+            )}
             <span role="status" className="flex items-center gap-2 text-[13px] text-fg-2">
               <span
                 aria-hidden
-                className={`h-2 w-2 rounded-full ${
-                  phase === "failed" ? "bg-bad" : phase === "ended" ? "bg-fg-4" : "bg-ok"
-                } ${phase === "thinking" || phase === "ending" ? "animate-pulse" : ""}`}
+                className={`h-2 w-2 rounded-full ${phase === "failed" ? "bg-bad" : "bg-ok"} ${
+                  phase === "thinking" ? "animate-pulse" : ""
+                }`}
               />
               {PHASE_LABEL[phase]}
             </span>
-            {cameraChecks && (
-              <span className="hidden items-center gap-1.5 text-[12px] text-fg-3 sm:flex" title="Face presence is checked on your device. No video leaves this browser.">
-                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-fg-4" />
-                Camera checks on
-              </span>
-            )}
             <span className="tnum font-mono text-[13px] text-fg" title="Time remaining">
               {mmss(remaining)}
             </span>
@@ -352,78 +429,87 @@ export function InterviewRoom({
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-[720px] flex-1 px-4 py-8">
-        {resumed && live && (
-          <div className="mb-6 rounded-md bg-accent-soft px-3 py-2 text-[13px] text-accent-fg">
-            Reconnected. Carry on from where you were.
-          </div>
-        )}
-
-        {lines.length === 0 && live && (
-          <p className="text-[15px] text-fg-2">
-            {phase === "connecting"
-              ? "Connecting to your interviewer."
-              : "Your interviewer will speak first. Answer out loud when it does."}
-          </p>
-        )}
-
-        <div aria-live="polite" className="space-y-6">
-          {lines.map((line, i) => (
-            <div key={i}>
-              <div className="mb-1 text-[12px] font-medium text-fg-3">
-                {line.speaker === "agent" ? "Interviewer" : candidate}
-              </div>
-              <p className={`text-[15px] leading-relaxed ${line.speaker === "agent" ? "text-fg" : "text-fg-2"}`}>
-                {line.text}
-              </p>
-              {line.tools && line.tools.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {line.tools.map((t) => (
-                    <Badge key={t}>{TOOL_LABEL[t] ?? t}</Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-          {live && pendingTools.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {pendingTools.map((t) => (
-                <Badge key={t} tone="accent" dot>
-                  {TOOL_LABEL[t] ?? t}
-                </Badge>
-              ))}
+      <div className="mx-auto flex w-full max-w-[860px] flex-1 gap-6 px-4 py-8">
+        <div className="min-w-0 flex-1">
+          {resumed && (
+            <div className="mb-6 rounded-md bg-accent-soft px-3 py-2 text-[13px] text-accent-fg">
+              Reconnected. Carry on from where you were.
             </div>
           )}
-        </div>
 
-        {phase === "ending" && (
-          <p className="mt-8 rounded-md bg-surface px-4 py-3 text-[15px] text-fg shadow-sm">
-            Wrapping up — one moment.
-          </p>
-        )}
+          {lines.length === 0 && (
+            <p className="text-[15px] text-fg-2">
+              {phase === "connecting"
+                ? "Connecting to your interviewer."
+                : "Your interviewer will speak first. Answer out loud when it does."}
+            </p>
+          )}
 
-        {phase === "ended" && (
-          <p className="mt-8 rounded-md bg-surface px-4 py-3 text-[15px] text-fg shadow-sm">
-            That&apos;s the end of the interview. A person reviews it from here.
-          </p>
-        )}
-
-        {problem && (
-          <div role="alert" className="mt-6 flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-fg shadow-sm">
-            <span>{problem}</span>
-            {phase === "failed" && (
-              <Button size="sm" onClick={() => setAttempt((a) => a + 1)}>
-                Reconnect
-              </Button>
+          <div aria-live="polite" className="space-y-6">
+            {lines.map((line, i) => (
+              <div key={i}>
+                <div className="mb-1 text-[12px] font-medium text-fg-3">
+                  {line.speaker === "agent" ? "Interviewer" : candidate}
+                </div>
+                <p className={`text-[15px] leading-relaxed ${line.speaker === "agent" ? "text-fg" : "text-fg-2"}`}>
+                  {line.text}
+                </p>
+                {line.tools && line.tools.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {line.tools.map((t) => (
+                      <Badge key={t}>{TOOL_LABEL[t] ?? t}</Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            {pendingTools.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {pendingTools.map((t) => (
+                  <Badge key={t} tone="accent" dot>
+                    {TOOL_LABEL[t] ?? t}
+                  </Badge>
+                ))}
+              </div>
             )}
           </div>
+
+          {problem && (
+            <div
+              role="alert"
+              className="mt-6 flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-fg shadow-sm"
+            >
+              <span>{problem}</span>
+              {phase === "failed" && (
+                <Button size="sm" onClick={() => setAttempt((a) => a + 1)}>
+                  Reconnect
+                </Button>
+              )}
+            </div>
+          )}
+          <div ref={endRef} />
+        </div>
+
+        {cameraChecks && (
+          <aside className="hidden shrink-0 sm:block">
+            <div className="sticky top-20">
+              <ProctorPanel
+                stream={proctorStream}
+                status={proctorStatus}
+                warnings={warnings}
+                maxWarnings={MAX_WARNINGS}
+              />
+              <p className="mt-2 w-[164px] text-[11px] leading-snug text-fg-3">
+                Checks run on your device. No video is sent or stored.
+              </p>
+            </div>
+          </aside>
         )}
-        <div ref={endRef} />
       </div>
 
       {live && (
         <div className="sticky bottom-0 border-t border-border bg-surface">
-          <div className="mx-auto w-full max-w-[720px] px-4 py-3">
+          <div className="mx-auto w-full max-w-[860px] px-4 py-3">
             {typing ? (
               <div className="flex items-end gap-2">
                 <Textarea
@@ -445,19 +531,17 @@ export function InterviewRoom({
                 </Button>
               </div>
             ) : (
-              <div className="flex items-center gap-4">
-                <div aria-hidden className="flex h-8 flex-1 items-end gap-[3px]">
-                  {Array.from(bins).map((v, i) => (
-                    <span
-                      key={i}
-                      className="flex-1 rounded-sm transition-[height] duration-75"
-                      style={{
-                        height: `${Math.max(3, (v / 255) * 32)}px`,
-                        backgroundColor: v > 24 ? "var(--color-accent)" : "var(--color-border-strong)",
-                      }}
-                    />
-                  ))}
-                </div>
+              <div aria-hidden className="flex h-8 items-end gap-[3px]">
+                {Array.from(bins).map((v, i) => (
+                  <span
+                    key={i}
+                    className="flex-1 rounded-sm transition-[height] duration-75"
+                    style={{
+                      height: `${Math.max(3, (v / 255) * 32)}px`,
+                      backgroundColor: v > 24 ? "var(--color-accent)" : "var(--color-border-strong)",
+                    }}
+                  />
+                ))}
               </div>
             )}
             <div className="mt-2 flex items-center justify-between text-[12px] text-fg-3">

@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     max_turns: int = 60
     max_probes_per_topic: int = 2
     max_tool_iterations: int = 6
+    # Integrity warnings before the interview is ended. Ending is not judging:
+    # the scorecard records why, and a human still decides.
+    max_integrity_warnings: int = 3
 
     cors_origins: str = "http://localhost:3000"
 
