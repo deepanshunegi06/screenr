@@ -1,0 +1,44 @@
+role_title: Backend engineering intern
+skills:
+  - key: backend_depth
+    name: Backend fundamentals
+    weight: 1.0
+    what_good_looks_like: >
+      Names concrete technologies they personally used and can explain a decision
+      they made: why this database, why this framework, what they would change.
+      A strong answer contains a specific failure they hit and how they diagnosed
+      it. A weak answer lists technologies without any decision or consequence.
+
+  - key: api_design
+    name: API and data modelling
+    weight: 1.0
+    what_good_looks_like: >
+      Can describe an endpoint they designed and the shape of its request and
+      response, why they split or joined tables that way, and how they handled an
+      error case. Strong answers mention something that bit them: a migration, an
+      N+1 query, a nullable column that should not have been.
+
+  - key: ai_agents
+    name: LLM and agent concepts
+    weight: 1.0
+    what_good_looks_like: >
+      Distinguishes a fixed prompt chain from a system that decides its own next
+      step. If they claim RAG, they can name a chunking choice and say what broke
+      with the first approach. Buzzword recall without a decision behind it is a
+      weak answer, however fluent.
+
+  - key: ownership
+    name: Ownership and debugging
+    weight: 1.0
+    what_good_looks_like: >
+      Tells a first-person story of something that broke, how they narrowed it
+      down, and what they changed. Strong answers admit a wrong first hypothesis.
+      Weak answers are told in the passive voice or credit an unnamed team.
+
+  - key: communication
+    name: Technical communication
+    weight: 0.5
+    what_good_looks_like: >
+      Explains a technical choice in plain language, gives the reason before the
+      detail, and says "I do not know" instead of bluffing. Judge structure and
+      honesty only -- never fluency, accent, or speed.
