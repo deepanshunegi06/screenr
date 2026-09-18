@@ -75,17 +75,34 @@ def build_tools(ctx: InterviewContext) -> list[BaseTool]:
             return "score must be between 1 and 5."
         if not quote.strip():
             return "quote is required: a score without a source is not usable."
+
+        quote = quote.strip()
+        # One answer is one piece of evidence. Without this, a model that re-reads
+        # the same good answer each turn inflates the skill it is filed under --
+        # observed doing exactly that, five times on one quote.
+        if any(e.skill_key == skill_key and e.quote == quote for e in ctx.evidence):
+            remaining = [s.key for s in ctx.uncovered_skills()]
+            return (
+                f"Already recorded that answer against {skill_key}. "
+                f"Ask about something else. Still uncovered: {remaining or 'none'}"
+            )
+
         ctx.evidence.append(
             Evidence(
                 skill_key=skill_key,
                 score=float(score),
-                quote=quote.strip(),
+                quote=quote,
                 note=note.strip(),
                 at_seconds=ctx.elapsed_seconds(),
             )
         )
         remaining = [s.key for s in ctx.uncovered_skills()]
-        return f"Recorded {skill_key}={score}. Skills still uncovered: {remaining or 'none'}"
+        if not remaining:
+            return f"Recorded {skill_key}={score}. Every skill now has evidence -- close it out."
+        return (
+            f"Recorded {skill_key}={score}. Ask about one of these next, "
+            f"they have nothing yet: {remaining}"
+        )
 
     @tool
     def mark_claim(claim_id: str, status: str, note: str) -> str:

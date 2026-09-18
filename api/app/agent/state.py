@@ -83,6 +83,9 @@ class InterviewContext:
     # Ordered record of which tools the model chose, per turn. This is the
     # evidence that the agent branches at runtime rather than following a script.
     tool_log: list[list[str]] = field(default_factory=list)
+    # Questions already put to the candidate. Fed back to the model so it can
+    # see itself repeating -- it cannot otherwise, once older turns are trimmed.
+    asked: list[str] = field(default_factory=list)
     turn_count: int = 0
     stop_reason: StopReason | None = None
     escalation_note: str | None = None

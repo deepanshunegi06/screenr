@@ -117,7 +117,7 @@ attributable to the agent rather than to the person.
 
 ## Stack
 
-Python 3.12, FastAPI, LangGraph, Groq (Llama 3.3 70B), Postgres with pgvector,
+Python 3.12, FastAPI, LangGraph, Groq (gpt-oss-120b), Postgres with pgvector,
 fastembed for local embeddings, Next.js, Deepgram for speech.
 
 Every piece has a free tier with no credit card. Total running cost: zero.

@@ -17,8 +17,7 @@ interview, because the candidate starts talking over the pause.
 One `build_llm()` factory behind `LLM_PROVIDER` and `LLM_MODEL`. Three
 implementations: Groq, Gemini, Anthropic. Nothing in `app/agent/` names a vendor.
 
-Groq is the default: sub-100ms time-to-first-token on Llama 3.3 70B, free tier, no
-card. Gemini Flash is the fallback when Groq rate-limits.
+Groq is the default: sub-100ms time-to-first-token, free tier, no card. Gemini Flash is the fallback when Groq rate-limits.
 
 ## Consequences
 

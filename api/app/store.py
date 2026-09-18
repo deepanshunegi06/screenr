@@ -25,7 +25,6 @@ class Session:
     candidate_name: str
     rubric: str
     ctx: InterviewContext
-    agent: Interviewer
     consented: bool = False
     proctoring_consented: bool = False
     started: bool = False
@@ -33,6 +32,20 @@ class Session:
     transcript: list[dict] = field(default_factory=list)
     decision: str | None = None
     decided_by: str | None = None
+    _agent: Interviewer | None = None
+
+    @property
+    def agent(self) -> Interviewer:
+        """The typed-interview driver, built on first use.
+
+        Voice interviews are driven by Deepgram and never touch this, so building
+        it eagerly would make a text-LLM key a requirement for a voice-only
+        deployment. Both drivers share the same context, so state is identical
+        whichever one runs.
+        """
+        if self._agent is None:
+            self._agent = Interviewer(self.ctx)
+        return self._agent
 
     def record(self, speaker: str, text: str, tools: list[str] | None = None) -> None:
         self.transcript.append(
@@ -57,7 +70,6 @@ def create(candidate_email: str, candidate_name: str, rubric: str, resume_text: 
         candidate_name=candidate_name.strip() or candidate_email.split("@")[0],
         rubric=rubric,
         ctx=ctx,
-        agent=Interviewer(ctx),
     )
     _SESSIONS[session_id] = session
     return session

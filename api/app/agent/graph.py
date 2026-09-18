@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages.utils import trim_messages
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -23,6 +24,11 @@ from .state import InterviewContext, InterviewState
 from .tools import build_tools
 
 PROMPT = (Path(__file__).parent / "prompts" / "interviewer.md").read_text(encoding="utf-8")
+
+# How many recent messages travel with each request. The system prompt carries
+# the state that matters, so this only needs to cover the current exchange and
+# its tool calls.
+WINDOW_MESSAGES = 10
 
 
 def render_system_prompt(ctx: InterviewContext) -> str:
@@ -53,6 +59,7 @@ def render_system_prompt(ctx: InterviewContext) -> str:
         turn_count=ctx.turn_count,
         max_turns=s.max_turns,
         uncovered=", ".join(sk.key for sk in ctx.uncovered_skills()) or "none",
+        asked="\n".join(f"- {q}" for q in ctx.asked[-5:]) or "- (none yet)",
         unverified=", ".join(c.id for c in ctx.unverified_claims()) or "none",
         closing_note=closing_note,
     )
@@ -65,7 +72,20 @@ def build_graph(ctx: InterviewContext, checkpointer=None):
     tool_node = ToolNode(tools)
 
     def agent(state: InterviewState) -> dict:
-        messages = [SystemMessage(render_system_prompt(ctx)), *state["messages"]]
+        # Only the recent conversation goes to the model. Everything the agent has
+        # concluded is already in the system prompt -- scores recorded, skills still
+        # uncovered, claims still open -- so the older turns are redundant context,
+        # and re-sending them every turn is what burns a token-per-minute budget.
+        recent = trim_messages(
+            state["messages"],
+            strategy="last",
+            token_counter=len,
+            max_tokens=WINDOW_MESSAGES,
+            start_on="human",
+            include_system=False,
+            allow_partial=False,
+        )
+        messages = [SystemMessage(render_system_prompt(ctx)), *(recent or state["messages"][-1:])]
         return {"messages": [llm.invoke(messages)]}
 
     def route(state: InterviewState) -> str:
@@ -134,13 +154,17 @@ class Interviewer:
         # but silence on a live call is worse than a filler line.
         return "Sorry, could you say a bit more about that?"
 
+    def _remember(self, utterance: str) -> str:
+        self.ctx.asked.append(utterance)
+        return utterance
+
     def open(self) -> str:
         result = self.graph.invoke(
             {"messages": [HumanMessage("[The candidate has joined. Begin the interview.]")]},
             self._config(),
         )
         self._record_tools(result)
-        return self._speak(result)
+        return self._remember(self._speak(result))
 
     def turn(self, answer: str) -> str:
         if self.ctx.is_finished():
@@ -153,4 +177,4 @@ class Interviewer:
         self.ctx.turn_count += 1
         result = self.graph.invoke({"messages": [HumanMessage(answer)]}, self._config())
         self._record_tools(result)
-        return self._speak(result)
+        return self._remember(self._speak(result))

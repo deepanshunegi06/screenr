@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # LLM provider is swappable so the agent is not tied to one vendor.
     llm_provider: str = "groq"
-    llm_model: str = "llama-3.3-70b-versatile"
+    llm_model: str = "openai/gpt-oss-120b"
     groq_api_key: str = ""
     google_api_key: str = ""
     anthropic_api_key: str = ""
@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://screenr:screenr@localhost:5432/screenr"
 
     deepgram_api_key: str = ""
+    # The model Deepgram runs for voice interviews. Separate from llm_model:
+    # that one names a model on OUR provider, this one names a model on theirs.
+    voice_think_model: str = "gemini-3.1-flash-lite"
     # Where Deepgram calls us back for each turn. Must be publicly reachable.
     public_api_url: str = "http://localhost:8000"
 

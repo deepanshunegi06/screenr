@@ -20,8 +20,11 @@ def build_llm(temperature: float = 0.3) -> BaseChatModel:
             model=s.llm_model,
             temperature=temperature,
             api_key=s.groq_api_key,
-            timeout=20,
-            max_retries=1,
+            timeout=30,
+            # The free tier is 8k tokens/minute and an interview will hit it.
+            # The SDK honours the Retry-After header, so waiting is cheaper than
+            # failing a turn mid-conversation.
+            max_retries=5,
         )
 
     if provider == "gemini":

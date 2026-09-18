@@ -59,6 +59,8 @@ you are not working through these in order:
 
 Elapsed: {elapsed}s of {max_seconds}s. Turn {turn_count} of {max_turns}.
 Skills still without evidence: {uncovered}
+Questions you have already asked -- do not ask any of these again, even reworded:
+{asked}
 Claims still unverified: {unverified}
 
 {closing_note}
