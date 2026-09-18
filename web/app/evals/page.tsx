@@ -5,9 +5,14 @@ import { useEffect, useState } from "react";
 import { AppShell, Badge, Button, Card, EmptyState, Page, PageHeader, Skeleton, Stat, Verdict } from "@/components/ui";
 import { ApiError, api, relativeTime, type EvalReport, type EvalRun } from "@/lib/api";
 
+/** How often to ask the server how far a run has got. A persona takes tens of
+ *  seconds, so this is about watching progress, not about precision. */
+const POLL_MS = 2500;
+
 export default function EvalsPage() {
   const [report, setReport] = useState<EvalReport | null>(null);
   const [error, setError] = useState("");
+  const [starting, setStarting] = useState(false);
 
   const load = () =>
     api
@@ -22,11 +27,37 @@ export default function EvalsPage() {
     void load();
   }, []);
 
+  // Only poll while something is actually running, so an idle page is idle.
+  const running = report?.run.running ?? false;
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => void load(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [running]);
+
+  async function runNow() {
+    setStarting(true);
+    setError("");
+    try {
+      await api.runEvals();
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't start a run.");
+    } finally {
+      setStarting(false);
+    }
+  }
+
   return (
     <AppShell>
       <PageHeader
         title="Evals"
         description="Scripted candidates run through the agent in text. Same rubric, same opening — the tool sequence is the agent's own choice."
+        actions={
+          <Button variant="primary" onClick={runNow} loading={starting || running}>
+            {running ? `Running ${report?.run.done ?? 0}/${report?.run.total ?? 0}` : "Run them now"}
+          </Button>
+        }
       />
       <Page width="wide">
         {error && (
@@ -46,10 +77,36 @@ export default function EvalsPage() {
           </div>
         )}
 
-        {report && report.ranAt === null && (
+        {report?.run.running && (
+          <div
+            role="status"
+            className="mb-4 flex items-center justify-between gap-3 rounded-md border border-accent/30 bg-accent-soft px-3 py-2 text-[13px] text-accent-fg"
+          >
+            <span>
+              Running the scripted candidates against the live agent — {report.run.done} of{" "}
+              {report.run.total} done. The numbers below update as each finishes.
+            </span>
+          </div>
+        )}
+
+        {report?.run.error && !report.run.running && (
+          <div
+            role="alert"
+            className="mb-4 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[13px] text-warn-fg"
+          >
+            Last run: {report.run.error}
+          </div>
+        )}
+
+        {report && report.ranAt === null && !report.run.running && (
           <EmptyState
-            title="No eval results committed yet"
-            description="Run the personas and commit the report: python -m app.cli --json evals/results/latest.json"
+            title="No eval results yet"
+            description="Press Run them now, or run them from a terminal: python -m app.cli --json evals/results/latest.json"
+            action={
+              <Button variant="primary" onClick={runNow} loading={starting}>
+                Run them now
+              </Button>
+            }
           />
         )}
 
@@ -76,6 +133,19 @@ export default function EvalsPage() {
               because the agent chose differently based on what each candidate said — that is the
               difference between an agent and a script.
             </p>
+
+            {report.errors.length > 0 && (
+              <div className="mt-4 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[13px] text-warn-fg">
+                <div className="font-medium">
+                  {report.errors.length} persona{report.errors.length === 1 ? "" : "s"} could not be run
+                </div>
+                {report.errors.map((e) => (
+                  <div key={e.persona} className="mt-0.5">
+                    <span className="font-mono text-[12px]">{e.persona}</span> — {e.reason}
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               {report.runs.map((run) => (

@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field, TypeAdapter, ValidationError
 
-from . import store
+from . import evalruns, store
 from .auth import (
     candidate_session_id,
     check_configuration,
@@ -367,19 +367,35 @@ def roles(_: str = Depends(current_recruiter)) -> list[dict]:
 
 @app.get("/evals")
 def evals(_: str = Depends(current_recruiter)) -> dict:
-    """Committed eval results. Runs happen offline via `python -m app.cli --json`."""
-    if EVALS_RESULTS.is_file():
-        try:
-            return json.loads(EVALS_RESULTS.read_text(encoding="utf-8"))
-        except ValueError:
-            pass
-    return {
+    """The last eval report, plus whether one is running right now."""
+    report = {
         "ranAt": None,
         "model": "",
         "provider": "",
         "runs": [],
+        "errors": [],
         "summary": {"total": 0, "passed": 0, "branchingProven": False},
     }
+    if EVALS_RESULTS.is_file():
+        try:
+            report = {**report, **json.loads(EVALS_RESULTS.read_text(encoding="utf-8"))}
+        except ValueError:
+            pass
+    return {**report, "run": evalruns.status()}
+
+
+@app.post("/evals/run", status_code=status.HTTP_202_ACCEPTED)
+def run_evals(_: str = Depends(current_recruiter)) -> dict:
+    """Re-run the scripted candidates now.
+
+    The point is that a reader does not have to trust the committed file: they
+    can press this, watch the numbers move, and see the same result appear.
+    """
+    try:
+        evalruns.start(EVALS_RESULTS)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return evalruns.status()
 
 
 # --- candidate ---------------------------------------------------------------------

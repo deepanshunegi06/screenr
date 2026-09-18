@@ -144,6 +144,12 @@ most turns).
 .venv/Scripts/python -m app.cli --json evals/results/latest.json   # what /evals renders
 ```
 
+A committed report is only as good as your trust in whoever committed it, so
+**Run them now** on the `/evals` page re-runs every persona against the live
+agent and rewrites that file while you watch. If the provider is rate limited
+and nothing runs, the previous report is kept rather than replaced with an
+empty one, and the page says so.
+
 ## Decisions
 
 - [001 — LangGraph on the typed path](docs/adr/001-langgraph-over-crewai.md)

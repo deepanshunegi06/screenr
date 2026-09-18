@@ -7,6 +7,7 @@ close and delete sessions freely.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -119,8 +120,17 @@ def test_roles_lists_both_rubrics(auth):
 
 def test_evals_report_has_the_expected_shape(auth):
     body = client.get("/evals", headers=auth).json()
-    assert set(body) == {"ranAt", "model", "provider", "runs", "summary"}
+    assert set(body) == {"ranAt", "model", "provider", "runs", "errors", "summary", "run"}
     assert set(body["summary"]) == {"total", "passed", "branchingProven"}
+    assert body["run"]["running"] is False
+
+
+def test_running_evals_needs_a_key(auth):
+    """Without a configured provider the button says so, rather than hanging."""
+    res = client.post("/evals/run", headers=auth)
+    assert res.status_code == 409
+    assert "LLM key" in res.json()["detail"]
+    assert client.get("/evals", headers=auth).json()["run"]["running"] is False
 
 
 def test_candidate_intro_and_consent(session):
@@ -305,3 +315,32 @@ def test_warning_frames_are_stored_and_served(auth):
     assert relay._decode_shot("data:image/png;base64,iVBORw0KGgo=") is None
     assert relay._decode_shot("not a data url") is None
     assert relay._decode_shot(None) is None
+
+
+def test_a_failed_eval_run_keeps_the_last_report(tmp_path, monkeypatch):
+    """A rate limit must not replace real results with an empty file."""
+    import time
+
+    from app import evalruns
+    from evals import runner
+
+    report = tmp_path / "latest.json"
+    report.write_text('{"summary": {"total": 4, "passed": 2}}', encoding="utf-8")
+
+    monkeypatch.setattr(evalruns, "_key_present", lambda: True)
+    monkeypatch.setattr(
+        runner, "run_interview", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("429 rate limited"))
+    )
+
+    evalruns.start(report)
+    for _ in range(50):
+        if not evalruns.status()["running"]:
+            break
+        time.sleep(0.1)
+
+    state = evalruns.status()
+    assert state["running"] is False
+    assert "unchanged" in state["error"]
+    assert "429" in state["error"]
+    # The whole point: the good report survived.
+    assert json.loads(report.read_text())["summary"]["passed"] == 2

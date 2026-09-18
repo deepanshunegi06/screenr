@@ -196,12 +196,22 @@ export type EvalRun = {
   checks: { name: string; passed: boolean; detail: string }[];
 };
 
+export type EvalRunState = {
+  running: boolean;
+  done: number;
+  total: number;
+  startedAt: string | null;
+  error: string | null;
+};
+
 export type EvalReport = {
   ranAt: string | null;
   model: string;
   provider: string;
   runs: EvalRun[];
+  errors: { persona: string; reason: string }[];
   summary: { total: number; passed: number; branchingProven: boolean };
+  run: EvalRunState;
 };
 
 export type InterviewIntro = {
@@ -294,6 +304,8 @@ export const api = {
   roles: () => request<Role[]>("/roles", {}, true),
 
   evals: () => request<EvalReport>("/evals", {}, true),
+
+  runEvals: () => request<EvalRunState>("/evals/run", { method: "POST" }, true),
 
   intro: (token: string) => request<InterviewIntro>(`/interview/${token}`),
 
