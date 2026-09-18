@@ -24,16 +24,14 @@ class Settings(BaseSettings):
     voice_think_provider: str = "anthropic"
     # Needed to read per-session usage back out of Deepgram.
     deepgram_project_id: str = ""
-    # Where Deepgram calls us back for each turn. Must be publicly reachable.
-    public_api_url: str = "http://localhost:8000"
 
     # Single hardcoded recruiter for v1. See docs/adr/004-no-auth-provider.md.
     recruiter_email: str = "recruiter@screenr.local"
     recruiter_password: str = "changeme"
     jwt_secret: str = "dev-secret-change-me"
-    # Fills the sign-in form so a demo does not open on an empty login box.
-    # Must be false anywhere real candidates can reach.
-    demo_prefill: bool = True
+    # Exposes POST /auth/demo, which mints a recruiter token without a password.
+    # For demos only; the password itself is never sent anywhere.
+    demo_mode: bool = False
 
     # Guardrails. Enforced server-side, never trusted from the client.
     max_interview_seconds: int = 1200

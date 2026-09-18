@@ -5,7 +5,7 @@ loses nothing: the candidate reconnects, Deepgram gets the history back from our
 transcript, and the agent carries on with the evidence it already had.
 
 An in-memory dict fronts the database so hot paths (a turn every few seconds) never
-block on disk reads. Postgres would be the right call for a real multi-instance
+block on disk reads. Postgres would be the right call for a multi-instance
 deployment; for an MVP on one box, this is the whole persistence layer.
 """
 
@@ -20,12 +20,24 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .agent.graph import Interviewer
-from .agent.state import Claim, Evidence, Flag, InterviewContext, Skill
+from .agent.state import Claim, Evidence, Flag, InterviewContext, Skill, StopReason
 from .config import get_settings
 from .roles import build_context
 
 _DB_PATH = Path(get_settings().data_dir) / "screenr.db"
 _LOCK = threading.Lock()
+
+# A candidate controls how many integrity events their browser sends. Past this
+# it is noise, or an attempt to bury something in it.
+MAX_INTEGRITY_FLAGS = 200
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
+
+
+def _from_iso(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
 
 
 @dataclass
@@ -36,10 +48,13 @@ class Session:
     rubric: str
     ctx: InterviewContext
     consented: bool = False
-    proctoring_consented: bool = False
     started: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    ended_at: datetime | None = None
     transcript: list[dict] = field(default_factory=list)
+    # Browser-side observations (tab switches and the like). Kept here, not on
+    # ctx, so the scoring input structurally cannot contain them.
+    integrity: list[Flag] = field(default_factory=list)
     decision: str | None = None
     decided_by: str | None = None
     decided_at: datetime | None = None
@@ -57,6 +72,14 @@ class Session:
         if self._agent is None:
             self._agent = Interviewer(self.ctx)
         return self._agent
+
+    def duration_seconds(self) -> int:
+        """Interview length. Zero before it starts, frozen once it ends -- never a
+        counter that keeps climbing on an abandoned session."""
+        if not self.started:
+            return 0
+        end = self.ended_at or datetime.now(UTC)
+        return max(0, int((end - self.ctx.started_at).total_seconds()))
 
     def record(self, speaker: str, text: str, tools: list[str] | None = None) -> None:
         self.transcript.append(
@@ -79,29 +102,30 @@ class Session:
             "candidate_name": self.candidate_name,
             "rubric": self.rubric,
             "consented": self.consented,
-            "proctoring_consented": self.proctoring_consented,
             "started": self.started,
-            "created_at": self.created_at.isoformat(),
+            "created_at": _iso(self.created_at),
+            "ended_at": _iso(self.ended_at),
             "transcript": self.transcript,
+            "integrity": [{**asdict(f), "at": _iso(f.at)} for f in self.integrity],
             "decision": self.decision,
             "decided_by": self.decided_by,
-            "decided_at": self.decided_at.isoformat() if self.decided_at else None,
+            "decided_at": _iso(self.decided_at),
             "ctx": {
                 "role_title": ctx.role_title,
                 "skills": [asdict(s) for s in ctx.skills],
                 "claims": [asdict(c) for c in ctx.claims],
-                "resume_chunks": ctx.resume_chunks,
-                "evidence": [
-                    {**asdict(e), "at": e.at.isoformat()} for e in ctx.evidence
-                ],
+                "resume_text": ctx.resume_text,
+                "evidence": [{**asdict(e), "at": _iso(e.at)} for e in ctx.evidence],
                 "probes": ctx.probes,
-                "flags": [{**asdict(f), "at": f.at.isoformat()} for f in ctx.flags],
+                "flags": [{**asdict(f), "at": _iso(f.at)} for f in ctx.flags],
                 "tool_log": ctx.tool_log,
                 "asked": ctx.asked,
+                "answers": ctx.answers,
                 "turn_count": ctx.turn_count,
+                "last_evidence_turn": ctx.last_evidence_turn,
                 "stop_reason": ctx.stop_reason,
                 "escalation_note": ctx.escalation_note,
-                "started_at": ctx.started_at.isoformat(),
+                "started_at": _iso(ctx.started_at),
             },
         }
 
@@ -113,18 +137,18 @@ class Session:
             role_title=c["role_title"],
             skills=[Skill(**s) for s in c["skills"]],
             claims=[Claim(**k) for k in c["claims"]],
-            resume_chunks=c.get("resume_chunks", []),
-            evidence=[
-                Evidence(**{**e, "at": datetime.fromisoformat(e["at"])}) for e in c.get("evidence", [])
-            ],
+            resume_text=c.get("resume_text", ""),
+            evidence=[Evidence(**{**e, "at": _from_iso(e["at"])}) for e in c.get("evidence", [])],
             probes=c.get("probes", {}),
-            flags=[Flag(**{**f, "at": datetime.fromisoformat(f["at"])}) for f in c.get("flags", [])],
+            flags=[Flag(**{**f, "at": _from_iso(f["at"])}) for f in c.get("flags", [])],
             tool_log=c.get("tool_log", []),
             asked=c.get("asked", []),
+            answers=c.get("answers", []),
             turn_count=c.get("turn_count", 0),
+            last_evidence_turn=c.get("last_evidence_turn", 0),
             stop_reason=c.get("stop_reason"),
             escalation_note=c.get("escalation_note"),
-            started_at=datetime.fromisoformat(c["started_at"]),
+            started_at=_from_iso(c["started_at"]),
         )
         return cls(
             id=row["id"],
@@ -133,13 +157,14 @@ class Session:
             rubric=row["rubric"],
             ctx=ctx,
             consented=row.get("consented", False),
-            proctoring_consented=row.get("proctoring_consented", False),
             started=row.get("started", False),
-            created_at=datetime.fromisoformat(row["created_at"]),
+            created_at=_from_iso(row["created_at"]),
+            ended_at=_from_iso(row.get("ended_at")),
             transcript=row.get("transcript", []),
+            integrity=[Flag(**{**f, "at": _from_iso(f["at"])}) for f in row.get("integrity", [])],
             decision=row.get("decision"),
             decided_by=row.get("decided_by"),
-            decided_at=datetime.fromisoformat(row["decided_at"]) if row.get("decided_at") else None,
+            decided_at=_from_iso(row.get("decided_at")),
         )
 
 
@@ -227,8 +252,27 @@ def delete(session_id: str) -> bool:
     return True
 
 
+def start(session: Session) -> None:
+    """The clock starts when the candidate arrives, not when the link was made."""
+    if not session.started:
+        session.started = True
+        session.ctx.started_at = datetime.now(UTC)
+        save(session)
+
+
+def finish(session: Session, reason: StopReason | None = None) -> None:
+    """Freeze the interview. Idempotent: the first caller's reason wins."""
+    if session.ctx.stop_reason is None:
+        session.ctx.stop_reason = reason or "incomplete"
+    if session.ended_at is None:
+        session.ended_at = datetime.now(UTC)
+    save(session)
+
+
 def add_integrity_flag(session: Session, kind: str, detail: str) -> None:
     """Integrity events live on the session, never on the scorecard.
     See docs/adr/005-proctoring-never-touches-scoring.md."""
-    session.ctx.flags.append(Flag(kind=kind, detail=detail))
+    if len(session.integrity) >= MAX_INTEGRITY_FLAGS:
+        return
+    session.integrity.append(Flag(kind=kind, detail=detail[:200]))
     save(session)

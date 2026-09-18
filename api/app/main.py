@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,21 +11,24 @@ from pydantic import BaseModel, EmailStr, Field
 from . import store
 from .auth import (
     candidate_session_id,
+    check_configuration,
     current_recruiter,
     issue_candidate_token,
     issue_recruiter_token,
     verify_login,
 )
 from .config import get_settings
-from .scoring import build_scorecard
 from .relay import router as relay_router
+from .roles import list_rubrics, load_rubric
+from .scoring import build_scorecard
 from .usage import session_usage
-from .voice import router as voice_router
+
+check_configuration()
 
 app = FastAPI(
     title="screenr",
     description="First-round screening that gathers evidence and hands the decision to a person.",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -34,13 +39,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(relay_router)
 
-# --- recruiter ---------------------------------------------------------------
+EVALS_RESULTS = Path(__file__).resolve().parent.parent / "evals" / "results" / "latest.json"
+
+
+# --- auth ------------------------------------------------------------------------
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(max_length=200)
+    password: str = Field(max_length=200)
 
 
 class TokenResponse(BaseModel):
@@ -49,18 +58,7 @@ class TokenResponse(BaseModel):
 
 @app.get("/config")
 def public_config() -> dict:
-    """What the sign-in page needs before anyone has signed in.
-
-    The password is only ever returned when demo_prefill is on, which is a
-    deliberate convenience for a single-account demo -- never enable it anywhere
-    real candidates or real candidate data can be reached.
-    """
-    s = get_settings()
-    return {
-        "demoPrefill": s.demo_prefill,
-        "recruiterEmail": s.recruiter_email if s.demo_prefill else "",
-        "recruiterPassword": s.recruiter_password if s.demo_prefill else "",
-    }
+    return {"demoMode": get_settings().demo_mode}
 
 
 @app.post("/auth/login", response_model=TokenResponse)
@@ -70,11 +68,23 @@ def login(body: LoginRequest) -> TokenResponse:
     return TokenResponse(token=issue_recruiter_token())
 
 
+@app.post("/auth/demo", response_model=TokenResponse)
+def demo_login() -> TokenResponse:
+    """One-click sign-in for demos. The password is never sent anywhere; this
+    mints a token directly, and only when the deployment opts in."""
+    if not get_settings().demo_mode:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Demo sign-in is not enabled")
+    return TokenResponse(token=issue_recruiter_token())
+
+
+# --- recruiter: sessions -----------------------------------------------------------
+
+
 class InviteRequest(BaseModel):
     candidateEmail: EmailStr
-    candidateName: str = ""
-    rubric: str = "backend_intern"
-    resumeText: str = ""
+    candidateName: str = Field("", max_length=80)
+    rubric: str = Field("backend_intern", pattern=r"^[a-z0-9_]{1,40}$")
+    resumeText: str = Field("", max_length=20000)
 
 
 class InviteResponse(BaseModel):
@@ -83,15 +93,42 @@ class InviteResponse(BaseModel):
     candidateEmail: str
 
 
+def _row(session: store.Session) -> dict:
+    card = build_scorecard(session.ctx)
+    regular = [s for s in session.ctx.skills if not s.cross_cutting]
+    return {
+        "id": session.id,
+        "candidate": session.candidate_name,
+        "candidateEmail": session.candidate_email,
+        "roleTitle": session.ctx.role_title,
+        "rubric": session.rubric,
+        "durationSeconds": session.duration_seconds(),
+        "turns": session.ctx.turn_count,
+        "skillsCovered": len(regular) - len(session.ctx.uncovered_skills()),
+        "skillsTotal": len(regular),
+        "overall": card["overall"],
+        "confidence": card["confidence"],
+        "recommendation": card["recommendation"],
+        "started": session.started,
+        "finished": session.ctx.is_finished(),
+        "reviewed": session.decision is not None,
+        "decision": session.decision,
+        "createdAt": session.created_at.isoformat(),
+    }
+
+
 @app.post("/sessions", response_model=InviteResponse)
 def create_session(body: InviteRequest, _: str = Depends(current_recruiter)) -> InviteResponse:
     """Invite a candidate. They get a link, not an account."""
-    session = store.create(
-        candidate_email=str(body.candidateEmail),
-        candidate_name=body.candidateName,
-        rubric=body.rubric,
-        resume_text=body.resumeText,
-    )
+    try:
+        session = store.create(
+            candidate_email=str(body.candidateEmail),
+            candidate_name=body.candidateName,
+            rubric=body.rubric,
+            resume_text=body.resumeText,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return InviteResponse(
         sessionId=session.id,
         inviteToken=issue_candidate_token(session.id),
@@ -101,25 +138,7 @@ def create_session(body: InviteRequest, _: str = Depends(current_recruiter)) -> 
 
 @app.get("/sessions")
 def list_sessions(_: str = Depends(current_recruiter)) -> list[dict]:
-    out = []
-    for session in store.all_sessions():
-        card = build_scorecard(session.ctx)
-        out.append(
-            {
-                "id": session.id,
-                "candidate": session.candidate_name,
-                "roleTitle": session.ctx.role_title,
-                "durationSeconds": card["duration_seconds"],
-                "overall": card["overall"] if session.ctx.evidence else None,
-                "confidence": card["confidence"],
-                "recommendation": card["recommendation"],
-                "started": session.started,
-                "finished": session.ctx.is_finished(),
-                "reviewed": session.decision is not None,
-                "createdAt": session.created_at.isoformat(),
-            }
-        )
-    return out
+    return [_row(s) for s in store.all_sessions()]
 
 
 @app.get("/sessions/{session_id}")
@@ -127,14 +146,26 @@ async def get_scorecard(session_id: str, _: str = Depends(current_recruiter)) ->
     session = _require(session_id)
     card = build_scorecard(session.ctx)
     card["candidate"] = session.candidate_name
+    card["candidateEmail"] = session.candidate_email
+    card["duration_seconds"] = session.duration_seconds()
     card["transcript"] = session.transcript
     card["decision"] = session.decision
-    # Measured from Deepgram, not estimated from our own clock.
-    card["usage"] = await session_usage(session.id)
-    # Kept out of build_scorecard on purpose: see docs/adr/005.
+    card["decidedBy"] = session.decided_by
+    card["decidedAt"] = session.decided_at.isoformat() if session.decided_at else None
+    card["createdAt"] = session.created_at.isoformat()
+    card["startedAt"] = session.ctx.started_at.isoformat() if session.started else None
+    card["finished"] = session.ctx.is_finished()
+    # Kept off the scorecard input on purpose: see docs/adr/005.
     card["integrity"] = [
-        {"kind": f.kind, "detail": f.detail, "at": 0} for f in session.ctx.flags
+        {
+            "kind": f.kind,
+            "detail": f.detail,
+            "at": max(0, int((f.at - session.ctx.started_at).total_seconds())),
+        }
+        for f in session.integrity
     ]
+    # Measured from Deepgram, not estimated from our own clock; null when unknown.
+    card["usage"] = await session_usage(session.id)
     return card
 
 
@@ -155,31 +186,84 @@ def record_decision(
     return {"decision": session.decision, "decidedBy": recruiter}
 
 
+@app.post("/sessions/{session_id}/close")
+def close_session(session_id: str, _: str = Depends(current_recruiter)) -> dict:
+    """Mark an abandoned interview as over so it stops counting up."""
+    session = _require(session_id)
+    store.finish(session, "incomplete")
+    return {"closed": True}
+
+
+@app.get("/sessions/{session_id}/invite")
+def reissue_invite(session_id: str, _: str = Depends(current_recruiter)) -> dict:
+    """A fresh candidate link for a session that already exists."""
+    session = _require(session_id)
+    return {"inviteToken": issue_candidate_token(session.id), "sessionId": session.id}
+
+
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: str, _: str = Depends(current_recruiter)) -> dict:
     if not store.delete(session_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such interview")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     return {"deleted": session_id}
 
 
-# --- candidate ---------------------------------------------------------------
+# --- recruiter: roles and evals ------------------------------------------------------
+
+
+@app.get("/roles")
+def roles(_: str = Depends(current_recruiter)) -> list[dict]:
+    out = []
+    for key in list_rubrics():
+        title, skills = load_rubric(key)
+        out.append(
+            {
+                "key": key,
+                "title": title,
+                "skills": [
+                    {
+                        "key": s.key,
+                        "name": s.name,
+                        "weight": s.weight,
+                        "cross_cutting": s.cross_cutting,
+                        "what_good_looks_like": s.what_good_looks_like,
+                    }
+                    for s in skills
+                ],
+            }
+        )
+    return out
+
+
+@app.get("/evals")
+def evals(_: str = Depends(current_recruiter)) -> dict:
+    """Committed eval results. Runs happen offline via `python -m app.cli --json`."""
+    if EVALS_RESULTS.is_file():
+        try:
+            return json.loads(EVALS_RESULTS.read_text(encoding="utf-8"))
+        except ValueError:
+            pass
+    return {
+        "ranAt": None,
+        "model": "",
+        "provider": "",
+        "runs": [],
+        "summary": {"total": 0, "passed": 0, "branchingProven": False},
+    }
+
+
+# --- candidate ---------------------------------------------------------------------
 
 
 class ConsentRequest(BaseModel):
     token: str
     recordingConsent: bool
-    proctoringConsent: bool = False
-
-
-class TurnRequest(BaseModel):
-    token: str
-    answer: str
 
 
 @app.get("/interview/{token}")
 def interview_intro(token: str) -> dict:
     """What a candidate sees before consenting. No scores, ever."""
-    session = _require(candidate_session_id(token))
+    session = _require_candidate(token)
     return {
         "candidate": session.candidate_name,
         "roleTitle": session.ctx.role_title,
@@ -192,64 +276,12 @@ def interview_intro(token: str) -> dict:
 
 @app.post("/interview/consent")
 def give_consent(body: ConsentRequest) -> dict:
-    session = _require(candidate_session_id(body.token))
+    session = _require_candidate(body.token)
     if not body.recordingConsent:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "The interview needs recording consent")
     session.consented = True
-    session.proctoring_consented = body.proctoringConsent
-    return {"consented": True, "proctoring": session.proctoring_consented}
-
-
-@app.post("/interview/start")
-def start_interview(body: ConsentRequest) -> dict:
-    session = _require(candidate_session_id(body.token))
-    if not session.consented:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Consent is needed before starting")
-    if session.started:
-        last = next((t for t in reversed(session.transcript) if t["speaker"] == "agent"), None)
-        return {"say": last["text"] if last else "", "finished": session.ctx.is_finished()}
-
-    session.started = True
-    # The clock starts when they start talking, not when the link was created.
-    session.ctx.started_at = datetime.now(UTC)
-    opening = session.agent.open()
-    session.record("agent", opening, session.ctx.tool_log[-1] if session.ctx.tool_log else [])
-    return {"say": opening, "finished": False}
-
-
-@app.post("/interview/turn")
-def take_turn(body: TurnRequest) -> dict:
-    session = _require(candidate_session_id(body.token))
-    if not session.started:
-        raise HTTPException(status.HTTP_409_CONFLICT, "The interview hasn't started")
-
-    session.record("candidate", body.answer)
-    reply = session.agent.turn(body.answer)
-    session.record("agent", reply, session.ctx.tool_log[-1] if session.ctx.tool_log else [])
-    return {
-        "say": reply,
-        "finished": session.ctx.is_finished(),
-        "elapsedSeconds": int(session.ctx.elapsed_seconds()),
-    }
-
-
-class IntegrityEvent(BaseModel):
-    token: str
-    kind: str
-    detail: str
-
-
-@app.post("/interview/integrity")
-def report_integrity(body: IntegrityEvent) -> dict:
-    """Browser-side integrity events. Stored next to the transcript for a human,
-    never fed into scoring."""
-    session = _require(candidate_session_id(body.token))
-    store.add_integrity_flag(session, body.kind, body.detail)
-    return {"recorded": True}
-
-
-app.include_router(voice_router)
-app.include_router(relay_router)
+    store.save(session)
+    return {"consented": True}
 
 
 @app.get("/healthz")
@@ -259,6 +291,13 @@ def healthz() -> dict:
 
 def _require(session_id: str) -> store.Session:
     session = store.get(session_id)
+    if session is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    return session
+
+
+def _require_candidate(token: str) -> store.Session:
+    session = store.get(candidate_session_id(token))
     if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "That interview link is no longer valid")
     return session

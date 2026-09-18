@@ -27,8 +27,9 @@ estimation is disabled.
 
 Enforced boundaries:
 
-1. Proctoring events are stored on the session, never on the scorecard. Nothing in
-   `scoring.py` imports them, and nothing ever should.
+1. Integrity events are stored on `Session.integrity`, never on the
+   `InterviewContext` that `scoring.py` receives. The scoring input structurally
+   cannot contain them.
 2. Video frames are never transmitted or stored. Only events: "no face, 8s",
    "second voice detected", "tab hidden, 14s".
 3. Camera analysis has its own consent checkbox. Declining it still allows the

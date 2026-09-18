@@ -33,8 +33,9 @@ vendor in the critical path.
 Own browser room. WebRTC audio straight from the candidate's browser to our
 backend, no meeting platform in between.
 
-Transport sits behind an interface with two implementations: `WebRoomTransport`,
-which is built and working, and `MeetTransport`, which is a documented stub.
+No transport abstraction was built. The browser room is the only transport; a
+Meet integration, if ever needed, would be a Recall.ai-style adapter feeding the
+same relay.
 
 ## Consequences
 
@@ -43,5 +44,5 @@ conversation. No lobby, no bot account, no DOM fragility, full control of the
 audio pipeline.
 
 What we give up: interviews cannot happen on a platform the candidate already has
-open. If that ever becomes a requirement, the adapter is a Recall.ai integration
-behind the existing interface, not a rewrite.
+open. If that ever becomes a requirement, it is an adapter in front of the relay,
+not a rewrite.

@@ -27,13 +27,17 @@ Audience = Literal["recruiter", "candidate"]
 bearer = HTTPBearer(auto_error=False)
 
 
+def check_configuration() -> None:
+    """Fail on boot, not on the reviewer's first login."""
+    s = get_settings()
+    placeholder_secret = not s.jwt_secret or s.jwt_secret == "dev-secret-change-me"
+    real_password = s.recruiter_password not in ("", "changeme")
+    if placeholder_secret and real_password:
+        raise RuntimeError("JWT_SECRET must be set when a real RECRUITER_PASSWORD is configured")
+
+
 def _secret() -> str:
-    secret = get_settings().jwt_secret
-    if not secret or secret == "dev-secret-change-me":
-        # Loud in production, quiet in local development.
-        if get_settings().recruiter_password not in ("", "changeme"):
-            raise RuntimeError("JWT_SECRET must be set when a real password is configured")
-    return secret or "dev-secret-change-me"
+    return get_settings().jwt_secret or "dev-secret-change-me"
 
 
 def issue_token(subject: str, audience: Audience, ttl: timedelta) -> str:
@@ -67,8 +71,11 @@ def _decode(token: str, audience: Audience) -> dict:
 def verify_login(email: str, password: str) -> bool:
     s = get_settings()
     # Compare both halves regardless of outcome so timing says nothing.
-    email_ok = secrets.compare_digest(email.strip().lower(), s.recruiter_email.strip().lower())
-    password_ok = secrets.compare_digest(password, s.recruiter_password)
+    # compare_digest on str raises on non-ASCII; bytes never does.
+    email_ok = secrets.compare_digest(
+        email.strip().lower().encode(), s.recruiter_email.strip().lower().encode()
+    )
+    password_ok = secrets.compare_digest(password.encode(), s.recruiter_password.encode())
     return email_ok and password_ok
 
 

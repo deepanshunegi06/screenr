@@ -50,20 +50,3 @@ async def session_usage(session_id: str) -> dict[str, float] | None:
         "requests": sum(int(r.get("requests") or 0) for r in results),
         "costUsd": round(agent_hours * AGENT_USD_PER_HOUR, 4),
     }
-
-
-async def project_balance() -> float | None:
-    settings = get_settings()
-    if not (settings.deepgram_api_key and settings.deepgram_project_id):
-        return None
-    url = f"https://api.deepgram.com/v1/projects/{settings.deepgram_project_id}/balances"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(
-                url, headers={"Authorization": f"Token {settings.deepgram_api_key}"}
-            )
-            response.raise_for_status()
-            balances = response.json().get("balances", [])
-    except (httpx.HTTPError, ValueError):
-        return None
-    return round(sum(float(b.get("amount") or 0) for b in balances), 4) if balances else None

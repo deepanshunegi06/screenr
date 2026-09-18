@@ -31,3 +31,7 @@ AGENTS.md
 
 # local sqlite
 api/data/
+
+# working notes, not part of the project
+docs/audit-*.md
+docs/audit-*.json

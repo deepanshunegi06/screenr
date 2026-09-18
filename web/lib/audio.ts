@@ -9,37 +9,71 @@
 const TARGET_RATE = 16000;
 const PLAYBACK_RATE = 24000;
 
-/** Average over each source window rather than picking one sample. Plain
- *  decimation aliases badly, and aliasing on speech sounds like a bad line. */
-function downsample(input: Float32Array, fromRate: number, toRate: number): Int16Array {
-  if (fromRate === toRate) {
-    const out = new Int16Array(input.length);
-    for (let i = 0; i < input.length; i++) {
-      out[i] = Math.max(-1, Math.min(1, input[i])) * 0x7fff;
+// ~85 ms at 48 kHz. Deepgram recommends 20-250 ms chunks; per-render-quantum
+// posting (128 samples) would mean ~375 tiny WebSocket frames a second.
+const CAPTURE_BLOCK = 4096;
+
+/** Averages over each source window rather than picking one sample -- plain
+ *  decimation aliases badly, and aliasing on speech sounds like a bad line.
+ *  Keeps a fractional read position across calls so the ratio does not drift
+ *  a sample per block at 44.1 kHz. */
+class Downsampler {
+  private position = 0;
+  constructor(
+    private readonly fromRate: number,
+    private readonly toRate: number,
+  ) {}
+
+  process(input: Float32Array): Int16Array {
+    if (this.fromRate === this.toRate) {
+      const out = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) out[i] = clamp(input[i]);
+      return out;
     }
-    return out;
+    const ratio = this.fromRate / this.toRate;
+    const out: number[] = [];
+    let start = this.position;
+    while (start + ratio <= input.length) {
+      const end = start + ratio;
+      const from = Math.floor(start);
+      const to = Math.min(Math.ceil(end), input.length);
+      let sum = 0;
+      for (let j = from; j < to; j++) sum += input[j];
+      out.push(clamp(sum / Math.max(1, to - from)));
+      start = end;
+    }
+    this.position = start - input.length;
+    return Int16Array.from(out);
   }
+}
 
-  const ratio = fromRate / toRate;
-  const length = Math.floor(input.length / ratio);
-  const out = new Int16Array(length);
-
-  for (let i = 0; i < length; i++) {
-    const start = Math.floor(i * ratio);
-    const end = Math.min(Math.floor((i + 1) * ratio), input.length);
-    let sum = 0;
-    for (let j = start; j < end; j++) sum += input[j];
-    const sample = sum / Math.max(1, end - start);
-    out[i] = Math.max(-1, Math.min(1, sample)) * 0x7fff;
-  }
-  return out;
+function clamp(sample: number): number {
+  return Math.max(-1, Math.min(1, sample)) * 0x7fff;
 }
 
 const WORKLET = `
 class Capture extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buffer = new Float32Array(${CAPTURE_BLOCK});
+    this.filled = 0;
+  }
   process(inputs) {
-    const channel = inputs[0]?.[0];
-    if (channel && channel.length) this.port.postMessage(channel.slice(0));
+    const channel = inputs[0] && inputs[0][0];
+    if (!channel) return true;
+    let offset = 0;
+    while (offset < channel.length) {
+      const room = this.buffer.length - this.filled;
+      const take = Math.min(room, channel.length - offset);
+      this.buffer.set(channel.subarray(offset, offset + take), this.filled);
+      this.filled += take;
+      offset += take;
+      if (this.filled === this.buffer.length) {
+        this.port.postMessage(this.buffer);
+        this.buffer = new Float32Array(this.buffer.length);
+        this.filled = 0;
+      }
+    }
     return true;
   }
 }
@@ -48,27 +82,26 @@ registerProcessor('capture', Capture);
 
 export type MicHandle = {
   stop: () => void;
-  /** 0..1, for the level meter. */
+  /** 0..1 overall level, for a simple meter. */
   level: () => number;
+  /** Frequency bins, for an honest meter. */
+  bins: () => Uint8Array;
 };
 
-export async function startMicrophone(
-  onChunk: (pcm: ArrayBuffer) => void,
-): Promise<MicHandle> {
+export async function startMicrophone(onChunk: (pcm: ArrayBuffer) => void): Promise<MicHandle> {
   const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
 
   const context = new AudioContext();
+  // Safari leaves a context suspended until something resumes it; capture that
+  // never runs looks exactly like a silent candidate.
+  await context.resume().catch(() => {});
   const source = context.createMediaStreamSource(stream);
 
   const analyser = context.createAnalyser();
-  analyser.fftSize = 512;
+  analyser.fftSize = 64;
+  analyser.smoothingTimeConstant = 0.6;
   const levels = new Uint8Array(analyser.frequencyBinCount);
   source.connect(analyser);
 
@@ -77,10 +110,11 @@ export async function startMicrophone(
   await context.audioWorklet.addModule(url);
   URL.revokeObjectURL(url);
 
+  const downsampler = new Downsampler(context.sampleRate, TARGET_RATE);
   const node = new AudioWorkletNode(context, "capture");
   node.port.onmessage = (event) => {
-    const pcm = downsample(event.data as Float32Array, context.sampleRate, TARGET_RATE);
-    onChunk(pcm.buffer as ArrayBuffer);
+    const pcm = downsampler.process(event.data as Float32Array);
+    if (pcm.length) onChunk(pcm.buffer as ArrayBuffer);
   };
   source.connect(node);
   // Worklets only run once connected to a destination; a zero gain keeps the
@@ -95,13 +129,17 @@ export async function startMicrophone(
       node.disconnect();
       source.disconnect();
       stream.getTracks().forEach((t) => t.stop());
-      context.close();
+      void context.close();
     },
     level: () => {
       analyser.getByteFrequencyData(levels);
       let sum = 0;
       for (let i = 0; i < levels.length; i++) sum += levels[i];
       return Math.min(1, sum / levels.length / 128);
+    },
+    bins: () => {
+      analyser.getByteFrequencyData(levels);
+      return levels;
     },
   };
 }
@@ -117,14 +155,26 @@ export class AgentVoice {
   private context: AudioContext | null = null;
   private cursor = 0;
   private sources = new Set<AudioBufferSourceNode>();
-  private speaking = false;
+
+  /** Create and resume the context from inside a user gesture. Browsers refuse
+   *  to start audio otherwise, and a WebSocket message is not a gesture. */
+  async unlock(): Promise<void> {
+    const context = this.ensure();
+    await context.resume().catch(() => {});
+  }
 
   private ensure(): AudioContext {
     if (!this.context || this.context.state === "closed") {
-      this.context = new AudioContext({ sampleRate: PLAYBACK_RATE });
+      try {
+        this.context = new AudioContext({ sampleRate: PLAYBACK_RATE });
+      } catch {
+        // Older WebKit rejects a requested sample rate. createBuffer still
+        // takes 24 kHz and the context resamples on output.
+        this.context = new AudioContext();
+      }
       this.cursor = 0;
     }
-    if (this.context.state === "suspended") void this.context.resume();
+    if (this.context.state === "suspended") void this.context.resume().catch(() => {});
     return this.context;
   }
 
@@ -145,12 +195,8 @@ export class AgentVoice {
     source.start(startAt);
     this.cursor = startAt + buffer.duration;
 
-    this.speaking = true;
     this.sources.add(source);
-    source.onended = () => {
-      this.sources.delete(source);
-      if (this.sources.size === 0) this.speaking = false;
-    };
+    source.onended = () => this.sources.delete(source);
   }
 
   /** Cut the agent off when the candidate starts talking. */
@@ -163,17 +209,12 @@ export class AgentVoice {
       }
     });
     this.sources.clear();
-    this.speaking = false;
     this.cursor = this.context?.currentTime ?? 0;
-  }
-
-  get isSpeaking() {
-    return this.speaking;
   }
 
   close() {
     this.interrupt();
-    void this.context?.close();
+    void this.context?.close().catch(() => {});
     this.context = null;
   }
 }

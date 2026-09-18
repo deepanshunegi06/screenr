@@ -27,7 +27,7 @@ property of the framework rather than something I maintain.
 
 ## Decision
 
-LangGraph, with a Postgres checkpointer in production and none in tests.
+LangGraph with an in-memory checkpointer on the typed path. Durability comes from SQLite write-through of the interview context, not from the checkpointer; on the voice path Deepgram's history is replayed from our transcript on reconnect.
 
 ## Consequences
 

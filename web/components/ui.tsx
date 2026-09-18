@@ -234,11 +234,14 @@ export function Badge({ tone = "neutral", children, dot }: { tone?: Tone; childr
   );
 }
 
-export function Verdict({ value }: { value: "advance" | "another_round" | "inconclusive" }) {
+export function Verdict({ value }: { value: "advance" | "another_round" | "below_bar" | "inconclusive" }) {
+  // Inconclusive is neutral on purpose: it means "not enough evidence", not
+  // "bad". Red is reserved for a human's recorded rejection.
   const map = {
     advance: { tone: "ok" as Tone, label: "Advance" },
     another_round: { tone: "warn" as Tone, label: "Another round" },
-    inconclusive: { tone: "bad" as Tone, label: "Inconclusive" },
+    below_bar: { tone: "bad" as Tone, label: "Below bar" },
+    inconclusive: { tone: "neutral" as Tone, label: "Inconclusive" },
   }[value];
   return (
     <Badge tone={map.tone} dot>

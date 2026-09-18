@@ -1,0 +1,25 @@
+services:
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./api/.env
+    environment:
+      CORS_ORIGINS: http://localhost:3000
+      DATA_DIR: /data
+    volumes:
+      - screenr-data:/data
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  screenr-data:

@@ -1,6 +1,6 @@
 # 006 — Deepgram calls us, not the other way around
 
-**Status:** accepted
+**Status:** superseded by [007](007-deepgram-managed-think.md). Kept for the reasoning; the callback design was built, measured, and replaced.
 
 ## Context
 

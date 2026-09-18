@@ -1,0 +1,40 @@
+role_title: Frontend engineering intern
+skills:
+  - key: component_design
+    name: Component and state design
+    weight: 1.0
+    what_good_looks_like: >
+      Explains where state lived in something they built and why it lived there,
+      including one place they moved it and what that fixed. Can name the
+      component boundary they got wrong the first time.
+
+  - key: rendering_perf
+    name: Rendering and performance
+    weight: 1.0
+    what_good_looks_like: >
+      Describes one real slowness they measured, the tool they measured it with,
+      and the specific change that fixed it. Knows the difference between a
+      re-render and a paint.
+
+  - key: accessibility
+    name: Accessibility and semantics
+    weight: 1.0
+    what_good_looks_like: >
+      Has tested something with a keyboard or screen reader and can say what
+      failed. Chooses native elements over divs and can say why for one case.
+
+  - key: data_fetching
+    name: Data fetching and errors
+    weight: 1.0
+    what_good_looks_like: >
+      Describes how loading, empty, and error states were handled in one screen
+      they built, and one race condition or stale-data bug they hit.
+
+  - key: communication
+    name: Technical communication
+    weight: 0.5
+    cross_cutting: true
+    what_good_looks_like: >
+      Across the whole conversation: gives the reason before the detail, uses
+      plain words for hard things, and says "I don't know" instead of bluffing.
+      Structure and honesty only -- never fluency, accent or speed.

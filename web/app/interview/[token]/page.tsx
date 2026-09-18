@@ -1,18 +1,20 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useEffect, useState } from "react";
 
-import { Wordmark, buttonClass, inputClass } from "@/components/Chrome";
 import { InterviewRoom } from "@/components/InterviewRoom";
-import { api, mmss } from "@/lib/api";
+import { Button, Card, Logo, Skeleton } from "@/components/ui";
+import { AgentVoice } from "@/lib/audio";
+import { api, type InterviewIntro } from "@/lib/api";
 
-type Line = { speaker: "agent" | "you"; text: string };
+type Stage = "loading" | "invalid" | "consent" | "live" | "done";
 
 export default function InterviewPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
-  const [intro, setIntro] = useState<Awaited<ReturnType<typeof api.intro>> | null>(null);
-  const [error, setError] = useState("");
-  const [stage, setStage] = useState<"consent" | "live" | "done">("consent");
+  const [intro, setIntro] = useState<InterviewIntro | null>(null);
+  const [stage, setStage] = useState<Stage>("loading");
+  // One AgentVoice for the page, unlocked inside the Start click.
+  const [voice] = useState(() => new AgentVoice());
 
   useEffect(() => {
     api
@@ -20,36 +22,44 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
       .then((data) => {
         setIntro(data);
         if (data.finished) setStage("done");
-        else if (data.started) setStage("live");
+        else if (data.consented && data.started) setStage("live");
+        else setStage("consent");
       })
-      .catch(() => setError("This interview link is no longer valid."));
+      .catch(() => setStage("invalid"));
   }, [token]);
 
-  if (error) {
+  useEffect(() => () => voice.close(), [voice]);
+
+  if (stage === "loading") {
     return (
-      <Centered>
-        <p className="font-display text-[24px] text-ink">{error}</p>
-        <p className="mt-3 text-[14px] text-muted">
-          Ask whoever invited you to send a new one.
-        </p>
-      </Centered>
+      <Frame>
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="mt-4 h-7 w-72" />
+        <Skeleton className="mt-6 h-24 w-full" />
+      </Frame>
     );
   }
 
-  if (!intro) return <Centered>{null}</Centered>;
+  if (stage === "invalid") {
+    return (
+      <Frame>
+        <h1 className="text-[18px] font-semibold text-fg">This link isn&apos;t valid any more</h1>
+        <p className="mt-2 text-[14px] text-fg-2">Ask whoever invited you to send a new one.</p>
+      </Frame>
+    );
+  }
+
+  if (!intro) return null;
 
   if (stage === "done") {
     return (
-      <Centered>
-        <p className="eyebrow">All done</p>
-        <p className="mt-4 font-display text-[28px] leading-snug text-ink">
-          Thanks, {intro.candidate}. That's the end of the screen.
+      <Frame>
+        <h1 className="text-[18px] font-semibold text-fg">Thanks, {intro.candidate}. That&apos;s the end.</h1>
+        <p className="mt-2 text-[14px] leading-relaxed text-fg-2">
+          Someone from the team reviews the conversation and decides what happens next. Nothing
+          was decided automatically.
         </p>
-        <p className="mt-4 max-w-md text-[15px] leading-relaxed text-muted">
-          Someone from the team reviews the conversation and decides what happens next.
-          Nothing was decided automatically.
-        </p>
-      </Centered>
+      </Frame>
     );
   }
 
@@ -58,8 +68,10 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
       <Consent
         token={token}
         intro={intro}
-        onStarted={() => setStage("live")}
-        onError={setError}
+        onStart={async () => {
+          await voice.unlock();
+          setStage("live");
+        }}
       />
     );
   }
@@ -68,19 +80,23 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
     <InterviewRoom
       token={token}
       candidate={intro.candidate}
+      maxMinutes={intro.maxMinutes}
+      voice={voice}
       onFinished={() => setStage("done")}
     />
   );
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
+function Frame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="border-b border-rule bg-sheet px-6 py-4">
-        <Wordmark />
+    <div className="flex min-h-dvh flex-col bg-bg">
+      <header className="border-b border-border bg-surface">
+        <div className="mx-auto flex h-12 w-full max-w-[720px] items-center px-4">
+          <Logo />
+        </div>
       </header>
-      <div className="flex flex-1 items-center justify-center px-6 text-center">
-        <div>{children}</div>
+      <div className="mx-auto w-full max-w-[560px] flex-1 px-4 py-12">
+        <Card>{children}</Card>
       </div>
     </div>
   );
@@ -89,109 +105,87 @@ function Centered({ children }: { children: React.ReactNode }) {
 function Consent({
   token,
   intro,
-  onStarted,
-  onError,
+  onStart,
 }: {
   token: string;
-  intro: { candidate: string; roleTitle: string; maxMinutes: number };
-  onStarted: () => void;
-  onError: (message: string) => void;
+  intro: InterviewIntro;
+  onStart: () => Promise<void>;
 }) {
-  const [recording, setRecording] = useState(false);
-  const [proctoring, setProctoring] = useState(false);
+  const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
 
   async function begin() {
-    if (!recording) {
-      setProblem("Tick the first box to continue. The interview can't run without it.");
+    if (!agreed) {
+      setProblem("Tick the box to continue. The interview can't run without it.");
       return;
     }
     setBusy(true);
+    setProblem("");
     try {
-      await api.consent(token, recording, proctoring);
-      // The opening question comes from the voice socket, not from here. Calling
-      // the typed start endpoint would burn that turn before the agent connects.
-      onStarted();
+      if (!intro.consented) await api.consent(token, true);
+      await onStart();
     } catch (err) {
-      onError(err instanceof Error ? err.message : "Could not start");
-    } finally {
+      setProblem(err instanceof Error ? err.message : "Couldn't start. Try again.");
       setBusy(false);
     }
   }
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="border-b border-rule bg-sheet px-6 py-4">
-        <Wordmark />
-      </header>
-      <div className="mx-auto w-full max-w-xl px-6 py-14">
-        <p className="eyebrow">{intro.roleTitle}</p>
-        <h1 className="mt-3 font-display text-[30px] leading-snug text-ink">
-          Hello {intro.candidate} — here's how this works.
-        </h1>
+    <Frame>
+      <div className="text-[12px] font-medium text-fg-2">{intro.roleTitle}</div>
+      <h1 className="mt-1 text-[18px] font-semibold text-fg">Hello {intro.candidate}. Here&apos;s how this works.</h1>
 
-        <ul className="mt-8 space-y-4 text-[15px] leading-relaxed text-ink-soft">
-          <li className="border-l-2 border-rule pl-4">
-            You'll talk with an AI interviewer for up to {intro.maxMinutes} minutes. It asks
-            follow-up questions based on your answers, so there's no fixed list.
-          </li>
-          <li className="border-l-2 border-rule pl-4">
-            It writes down what you say and scores it against a rubric. Every score has to
-            point at something you actually said.
-          </li>
-          <li className="border-l-2 border-pine pl-4">
-            <span className="text-ink">It does not decide anything.</span> A person reads the
-            transcript and makes the call.
-          </li>
-          <li className="border-l-2 border-rule pl-4">
-            Say "I don't know" when you don't. It scores honesty higher than a confident
-            guess.
-          </li>
-        </ul>
+      <ol className="mt-5 space-y-3 text-[14px] leading-relaxed text-fg">
+        <li className="flex gap-3">
+          <span className="tnum w-4 shrink-0 text-fg-3">1</span>
+          You&apos;ll talk with an AI interviewer for up to {intro.maxMinutes} minutes. It asks follow-up
+          questions based on your answers, so there&apos;s no fixed list.
+        </li>
+        <li className="flex gap-3">
+          <span className="tnum w-4 shrink-0 text-fg-3">2</span>
+          It writes down what you say. Every note it makes has to point at something you actually said.
+        </li>
+        <li className="flex gap-3">
+          <span className="tnum w-4 shrink-0 text-fg-3">3</span>
+          It doesn&apos;t decide anything. A person reads the transcript and makes the call.
+        </li>
+        <li className="flex gap-3">
+          <span className="tnum w-4 shrink-0 text-fg-3">4</span>
+          Say &quot;I don&apos;t know&quot; when you don&apos;t. Honesty scores better than a confident guess.
+        </li>
+      </ol>
 
-        <div className="mt-10 space-y-4 border-t border-rule pt-8">
-          <label className="flex cursor-pointer gap-3">
-            <input
-              type="checkbox"
-              checked={recording}
-              onChange={(e) => {
-                setRecording(e.target.checked);
-                setProblem("");
-              }}
-              className="mt-1 accent-pine"
-            />
-            <span className="text-[14px] leading-relaxed text-ink">
-              Record and transcribe this conversation.
-              <span className="mt-0.5 block text-[13px] text-muted">
-                The text is kept with your application. Audio is not stored.
-              </span>
-            </span>
-          </label>
+      <label className="mt-6 flex cursor-pointer gap-3 rounded-md border border-border bg-surface-2/50 p-3">
+        <input
+          type="checkbox"
+          checked={agreed}
+          onChange={(e) => {
+            setAgreed(e.target.checked);
+            setProblem("");
+          }}
+          className="mt-0.5 accent-accent"
+        />
+        <span className="text-[14px] text-fg">
+          Record and transcribe this conversation.
+          <span className="mt-0.5 block text-[12px] text-fg-3">
+            The text is kept with your application. Audio isn&apos;t stored.
+          </span>
+        </span>
+      </label>
 
-          <label className="flex cursor-pointer gap-3">
-            <input
-              type="checkbox"
-              checked={proctoring}
-              onChange={(e) => setProctoring(e.target.checked)}
-              className="mt-1 accent-pine"
-            />
-            <span className="text-[14px] leading-relaxed text-ink">
-              Camera checks during the interview.
-              <span className="mt-0.5 block text-[13px] text-muted">
-                Optional. Runs on your device — no video is sent or stored, only notes like
-                "no face for 8 seconds". Declining is fine and doesn't affect scoring.
-              </span>
-            </span>
-          </label>
-        </div>
+      {problem && (
+        <p role="alert" className="mt-3 text-[12px] text-bad">
+          {problem}
+        </p>
+      )}
 
-        {problem && <p className="mt-5 text-[13px] text-rust">{problem}</p>}
-
-        <button className={`${buttonClass} mt-8`} onClick={begin} disabled={busy}>
-          {busy ? "Starting…" : "Start the interview"}
-        </button>
-      </div>
-    </div>
+      <Button variant="primary" className="mt-5" onClick={begin} loading={busy}>
+        Start interview
+      </Button>
+      <p className="mt-3 text-[12px] text-fg-3">
+        Your browser will ask for microphone access. If that doesn&apos;t work, you can type instead.
+      </p>
+    </Frame>
   );
 }
