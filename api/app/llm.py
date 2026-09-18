@@ -27,6 +27,17 @@ def build_llm(temperature: float = 0.3) -> BaseChatModel:
             max_retries=5,
         )
 
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=s.llm_model,
+            temperature=temperature,
+            api_key=s.openai_api_key,
+            timeout=30,
+            max_retries=3,
+        )
+
     if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 

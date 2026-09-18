@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     llm_provider: str = "groq"
     llm_model: str = "openai/gpt-oss-120b"
     groq_api_key: str = ""
+    openai_api_key: str = ""
     google_api_key: str = ""
     anthropic_api_key: str = ""
 

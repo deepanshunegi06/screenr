@@ -42,7 +42,7 @@ def _readable(exc: Exception) -> str:
 
 def _key_present() -> bool:
     s = get_settings()
-    return bool(s.groq_api_key or s.google_api_key or s.anthropic_api_key)
+    return bool(s.groq_api_key or s.openai_api_key or s.google_api_key or s.anthropic_api_key)
 
 
 def status() -> dict:
