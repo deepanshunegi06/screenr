@@ -4,9 +4,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, TypeAdapter, ValidationError
 
 from . import store
 from .auth import (
@@ -19,6 +19,7 @@ from .auth import (
 )
 from .config import get_settings
 from .relay import router as relay_router
+from .resumes import extract, guess_name
 from .roles import list_rubrics, load_rubric
 from .scoring import build_scorecard
 from .usage import session_usage
@@ -136,9 +137,122 @@ def create_session(body: InviteRequest, _: str = Depends(current_recruiter)) -> 
     )
 
 
+@app.post("/resumes/parse")
+async def parse_resume(
+    file: UploadFile = File(...), _: str = Depends(current_recruiter)
+) -> dict:
+    """Text out of a PDF or Word résumé. The file itself is never stored."""
+    try:
+        text = extract(file.filename or "", await file.read())
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return {"text": text, "name": guess_name(text), "characters": len(text)}
+
+
+class BulkInviteRow(BaseModel):
+    """A row of a pasted shortlist.
+
+    The address is a plain string on purpose: typed as EmailStr, one typo in row
+    fourteen would 422 the whole batch, which is the opposite of what this
+    endpoint promises. It is validated per row instead, below.
+    """
+
+    candidateEmail: str = Field(max_length=254)
+    candidateName: str = Field("", max_length=80)
+    rubric: str = Field("backend_intern", pattern=r"^[a-z0-9_]{1,40}$")
+    resumeText: str = Field("", max_length=20000)
+
+
+class BulkInviteRequest(BaseModel):
+    candidates: list[BulkInviteRow] = Field(min_length=1, max_length=100)
+
+
+_EMAIL = TypeAdapter(EmailStr)
+
+
+@app.post("/sessions/bulk")
+def create_sessions(body: BulkInviteRequest, _: str = Depends(current_recruiter)) -> dict:
+    """Invite a whole shortlist at once.
+
+    One bad row does not lose the rest: each result carries either a link or the
+    reason it failed, so the recruiter can fix two addresses rather than redo
+    thirty.
+    """
+    created: list[dict] = []
+    failed: list[dict] = []
+    for candidate in body.candidates:
+        try:
+            _EMAIL.validate_python(candidate.candidateEmail)
+        except ValidationError:
+            failed.append({"candidateEmail": candidate.candidateEmail, "reason": "Not an email address."})
+            continue
+        try:
+            session = store.create(
+                candidate_email=str(candidate.candidateEmail),
+                candidate_name=candidate.candidateName,
+                rubric=candidate.rubric,
+                resume_text=candidate.resumeText,
+            )
+        except ValueError as exc:
+            failed.append({"candidateEmail": str(candidate.candidateEmail), "reason": str(exc)})
+            continue
+        created.append(
+            {
+                "sessionId": session.id,
+                "candidateEmail": session.candidate_email,
+                "candidateName": session.candidate_name,
+                "inviteToken": issue_candidate_token(session.id),
+            }
+        )
+    return {"created": created, "failed": failed}
+
+
 @app.get("/sessions")
 def list_sessions(_: str = Depends(current_recruiter)) -> list[dict]:
     return [_row(s) for s in store.all_sessions()]
+
+
+@app.get("/compare")
+def compare(rubric: str, _: str = Depends(current_recruiter)) -> dict:
+    """Every finished candidate for one role, against the same skills.
+
+    The recruiter's actual job is not reading one scorecard, it is choosing
+    between eight. Same rubric, same columns, so the comparison is like for like.
+    """
+    try:
+        title, skills = load_rubric(rubric)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    rows = []
+    for session in store.all_sessions():
+        if session.rubric != rubric or not session.started:
+            continue
+        card = build_scorecard(session.ctx)
+        scores = {s["key"]: s["score"] for s in card["skills"]}
+        rows.append(
+            {
+                "id": session.id,
+                "candidate": session.candidate_name,
+                "candidateEmail": session.candidate_email,
+                "overall": card["overall"],
+                "confidence": card["confidence"],
+                "recommendation": card["recommendation"],
+                "decision": session.decision,
+                "finished": session.ctx.is_finished(),
+                "durationSeconds": session.duration_seconds(),
+                "integrityCount": len(session.integrity),
+                "scores": scores,
+                "createdAt": session.created_at.isoformat(),
+            }
+        )
+    rows.sort(key=lambda r: (r["overall"] is None, -(r["overall"] or 0)))
+    return {
+        "rubric": rubric,
+        "title": title,
+        "skills": [{"key": s.key, "name": s.name, "weight": s.weight} for s in skills],
+        "candidates": rows,
+    }
 
 
 @app.get("/sessions/{session_id}")

@@ -173,3 +173,89 @@ def test_websocket_rejects_a_bad_token():
     with client.websocket_connect("/ws/interview/not-a-token") as ws:
         frame = ws.receive_json()
         assert frame["type"] == "Rejected"
+
+
+def _pdf(text: str) -> bytes:
+    """Smallest valid PDF carrying one line of text."""
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode() + body + b"\nendobj\n"
+    start = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF".encode()
+    )
+    return bytes(out)
+
+
+def test_resume_upload_reads_a_pdf(auth):
+    body = _pdf("Built a document Q and A service used by 200 students at placement season")
+    res = client.post(
+        "/resumes/parse",
+        files={"file": ("aditya.pdf", body, "application/pdf")},
+        headers=auth,
+    )
+    assert res.status_code == 200, res.text
+    assert "document Q and A service" in res.json()["text"]
+
+
+def test_resume_upload_rejects_unsupported_and_empty(auth):
+    res = client.post(
+        "/resumes/parse", files={"file": ("photo.png", b"\x89PNG\r\n", "image/png")}, headers=auth
+    )
+    assert res.status_code == 400
+    assert "PDF" in res.json()["detail"]
+
+    res = client.post(
+        "/resumes/parse", files={"file": ("empty.txt", b"hi", "text/plain")}, headers=auth
+    )
+    assert res.status_code == 400
+    assert "No text found" in res.json()["detail"]
+
+
+def test_bulk_invite_reports_each_row(auth):
+    res = client.post(
+        "/sessions/bulk",
+        json={
+            "candidates": [
+                {"candidateEmail": "one@test.edu", "candidateName": "One"},
+                {"candidateEmail": "two@test.edu", "rubric": "frontend_intern"},
+                {"candidateEmail": "three@test.edu", "rubric": "no_such_rubric"},
+                {"candidateEmail": "four-at-test.edu"},
+            ]
+        },
+        headers=auth,
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    # A bad row must not cost the good ones -- including a mistyped address,
+    # which would otherwise fail validation and reject the whole request.
+    assert len(body["created"]) == 2
+    assert len(body["failed"]) == 2
+    assert {f["candidateEmail"] for f in body["failed"]} == {"three@test.edu", "four-at-test.edu"}
+    assert all(row["inviteToken"] for row in body["created"])
+
+
+def test_compare_groups_candidates_by_role(auth):
+    res = client.get("/compare", params={"rubric": "backend_intern"}, headers=auth)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["title"] == "Backend engineering intern"
+    assert [s["key"] for s in body["skills"]]
+    # Not-yet-started candidates are noise in a comparison.
+    assert all(c["finished"] or c["durationSeconds"] >= 0 for c in body["candidates"])
+
+    assert client.get("/compare", params={"rubric": "nope"}, headers=auth).status_code == 400

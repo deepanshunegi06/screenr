@@ -10,6 +10,7 @@ import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTML
 
 const NAV = [
   { href: "/", label: "Interviews", match: (p: string) => p === "/" || p.startsWith("/sessions") },
+  { href: "/compare", label: "Compare", match: (p: string) => p.startsWith("/compare") },
   { href: "/roles", label: "Roles", match: (p: string) => p.startsWith("/roles") },
   { href: "/evals", label: "Evals", match: (p: string) => p.startsWith("/evals") },
 ];
@@ -314,7 +315,9 @@ export function Kbd({ children }: { children: ReactNode }) {
 
 export function Table({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`overflow-hidden rounded-lg border border-border bg-surface shadow-sm ${className}`}>
+    // overflow-x-auto, not hidden: a wide table should scroll rather than silently
+    // clip its last columns on a narrow screen.
+    <div className={`overflow-x-auto rounded-lg border border-border bg-surface shadow-sm ${className}`}>
       <table className="w-full border-collapse text-[13px]">{children}</table>
     </div>
   );

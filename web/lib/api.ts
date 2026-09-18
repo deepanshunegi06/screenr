@@ -142,6 +142,35 @@ export type Scorecard = {
   finished: boolean;
 };
 
+export type ParsedResume = { text: string; name: string; characters: number };
+
+export type BulkResult = {
+  created: { sessionId: string; candidateEmail: string; candidateName: string; inviteToken: string }[];
+  failed: { candidateEmail: string; reason: string }[];
+};
+
+export type CompareRow = {
+  id: string;
+  candidate: string;
+  candidateEmail: string;
+  overall: number | null;
+  confidence: Confidence;
+  recommendation: Recommendation;
+  decision: Decision | null;
+  finished: boolean;
+  durationSeconds: number;
+  integrityCount: number;
+  scores: Record<string, number | null>;
+  createdAt: string;
+};
+
+export type Comparison = {
+  rubric: string;
+  title: string;
+  skills: { key: string; name: string; weight: number }[];
+  candidates: CompareRow[];
+};
+
 export type Role = {
   key: string;
   title: string;
@@ -213,6 +242,32 @@ export const api = {
       { method: "POST", body: JSON.stringify(input) },
       true,
     ),
+
+  parseResume: async (file: File): Promise<ParsedResume> => {
+    const form = new FormData();
+    form.append("file", file);
+    const token = readToken();
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}/resumes/parse`, {
+        method: "POST",
+        body: form,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      throw new ApiError("Couldn't reach the server.", 0);
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(body.detail ?? "Couldn't read that file.", res.status);
+    return body as ParsedResume;
+  },
+
+  inviteMany: (
+    candidates: { candidateEmail: string; candidateName?: string; rubric?: string; resumeText?: string }[],
+  ) => request<BulkResult>("/sessions/bulk", { method: "POST", body: JSON.stringify({ candidates }) }, true),
+
+  compare: (rubric: string) =>
+    request<Comparison>(`/compare?rubric=${encodeURIComponent(rubric)}`, {}, true),
 
   reissueInvite: (id: string) =>
     request<{ inviteToken: string; sessionId: string }>(`/sessions/${id}/invite`, {}, true),
