@@ -16,11 +16,16 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://screenr:screenr@localhost:5432/screenr"
 
     deepgram_api_key: str = ""
+    # Where Deepgram calls us back for each turn. Must be publicly reachable.
+    public_api_url: str = "http://localhost:8000"
 
     # Single hardcoded recruiter for v1. See docs/adr/004-no-auth-provider.md.
     recruiter_email: str = "recruiter@screenr.local"
     recruiter_password: str = "changeme"
     jwt_secret: str = "dev-secret-change-me"
+    # Fills the sign-in form so a demo does not open on an empty login box.
+    # Must be false anywhere real candidates can reach.
+    demo_prefill: bool = True
 
     # Guardrails. Enforced server-side, never trusted from the client.
     max_interview_seconds: int = 1200

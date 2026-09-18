@@ -56,6 +56,9 @@ class Evidence:
     score: float
     quote: str
     note: str
+    # Seconds into the interview. This is what anchors a score to the transcript,
+    # and what the coverage map is plotted against.
+    at_seconds: float = 0.0
     at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 

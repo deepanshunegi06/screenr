@@ -1,7 +1,11 @@
+# Anything that looks like an env file, however it got named. Windows editors
+# like to append .txt, and *.env alone does not catch that.
 .env
-.env.local
+.env.*
 *.env
-!.env.example
+*.env.*
+env.local
+!env.example
 
 .venv/
 __pycache__/

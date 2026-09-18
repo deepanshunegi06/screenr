@@ -66,7 +66,12 @@ def build_scorecard(ctx: InterviewContext) -> dict:
                 "score": scores.get(s.key),
                 "covered": s.key in scores,
                 "evidence": [
-                    {"quote": e.quote, "note": e.note, "score": e.score}
+                    {
+                        "quote": e.quote,
+                        "note": e.note,
+                        "score": e.score,
+                        "at": int(e.at_seconds),
+                    }
                     for e in ctx.evidence
                     if e.skill_key == s.key
                 ],

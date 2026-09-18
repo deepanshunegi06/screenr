@@ -76,7 +76,13 @@ def build_tools(ctx: InterviewContext) -> list[BaseTool]:
         if not quote.strip():
             return "quote is required: a score without a source is not usable."
         ctx.evidence.append(
-            Evidence(skill_key=skill_key, score=float(score), quote=quote.strip(), note=note.strip())
+            Evidence(
+                skill_key=skill_key,
+                score=float(score),
+                quote=quote.strip(),
+                note=note.strip(),
+                at_seconds=ctx.elapsed_seconds(),
+            )
         )
         remaining = [s.key for s in ctx.uncovered_skills()]
         return f"Recorded {skill_key}={score}. Skills still uncovered: {remaining or 'none'}"

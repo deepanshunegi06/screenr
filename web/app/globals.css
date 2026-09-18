@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #16212b;
+  --color-ink-soft: #2e3d49;
+  --color-muted: #64727d;
+  --color-faint: #97a3ac;
+  --color-paper: #e7eaec;
+  --color-sheet: #fbfcfc;
+  --color-rule: #cfd6da;
+  --color-rule-soft: #e1e6e9;
+
+  --color-pine: #1b5e57;
+  --color-pine-soft: #dcebe8;
+  --color-amber: #a6690e;
+  --color-amber-soft: #f6ecdb;
+  --color-rust: #93372b;
+  --color-rust-soft: #f5e3e0;
+
+  --font-display: var(--font-newsreader), Georgia, serif;
+  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+html {
+  background: var(--color-paper);
+}
+
+body {
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-pine);
+  color: var(--color-sheet);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-pine);
+  outline-offset: 2px;
+}
+
+/* Ruled label: the small uppercase mono tags that name a region of the page.
+   Used sparingly -- they mark structure, they are not decoration. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
