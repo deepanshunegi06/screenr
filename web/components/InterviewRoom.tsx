@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge, Button, Logo, Textarea } from "@/components/ui";
 import { AgentVoice, startMicrophone, type MicHandle } from "@/lib/audio";
+import { startProctoring, type ProctorHandle } from "@/lib/proctor";
 import { api, mmss, wsUrl } from "@/lib/api";
 
 type Line = { speaker: "agent" | "you"; text: string; tools?: string[] };
@@ -33,6 +34,7 @@ export function InterviewRoom({
   candidate,
   maxMinutes,
   voice,
+  cameraChecks,
   onFinished,
 }: {
   token: string;
@@ -40,6 +42,8 @@ export function InterviewRoom({
   maxMinutes: number;
   /** Created and unlocked inside the Start click, so autoplay policy is satisfied. */
   voice: AgentVoice;
+  /** The candidate opted in to on-device camera presence checks. */
+  cameraChecks: boolean;
   onFinished: () => void;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
@@ -56,6 +60,7 @@ export function InterviewRoom({
 
   const socket = useRef<WebSocket | null>(null);
   const mic = useRef<MicHandle | null>(null);
+  const proctor = useRef<ProctorHandle | null>(null);
   const meter = useRef<ReturnType<typeof setInterval> | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -67,6 +72,11 @@ export function InterviewRoom({
   const send = useCallback((frame: object) => {
     const ws = socket.current;
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+  }, []);
+
+  const stopProctor = useCallback(() => {
+    proctor.current?.stop();
+    proctor.current = null;
   }, []);
 
   const stopMic = useCallback(() => {
@@ -183,6 +193,7 @@ export function InterviewRoom({
           case "Finished":
             setPhase("ended");
             stopMic();
+            stopProctor();
             finishTimer = setTimeout(() => onFinishedRef.current(), 2600);
             break;
           case "Rejected":
@@ -229,6 +240,20 @@ export function InterviewRoom({
           setProblem("No microphone access. You can type your answers below.");
         }
       }
+
+      // Camera checks are opt-in and never required. If the camera is refused or
+      // the model will not load, the interview carries on unproctored.
+      if (cameraChecks && !cancelled) {
+        try {
+          const handle = await startProctoring((event) =>
+            send({ type: "Integrity", kind: event.kind, detail: event.detail }),
+          );
+          if (cancelled) handle.stop();
+          else proctor.current = handle;
+        } catch {
+          // Nothing to tell the candidate: declining changes nothing for them.
+        }
+      }
     }
 
     void begin();
@@ -240,6 +265,7 @@ export function InterviewRoom({
       if (timer.current) clearInterval(timer.current);
       timer.current = null;
       stopMic();
+      stopProctor();
       const ws = socket.current;
       if (ws) {
         ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
@@ -247,7 +273,7 @@ export function InterviewRoom({
       }
       socket.current = null;
     };
-  }, [token, voice, attempt, startMic, stopMic]);
+  }, [token, voice, attempt, cameraChecks, send, startMic, stopMic, stopProctor]);
 
   const sendTyped = useCallback(() => {
     const answer = draft.trim();
@@ -283,12 +309,13 @@ export function InterviewRoom({
     send({ type: "End" });
     setConfirmEnd(false);
     stopMic();
+    stopProctor();
     // The server sends Finished once the closing line has played. Show the
     // wrapping-up state immediately so the button is never clicked twice, and
     // end anyway if that frame never arrives.
     setPhase("ending");
     setTimeout(() => setPhase((p) => (p === "ending" ? "ended" : p)), 12000);
-  }, [confirmEnd, send, stopMic]);
+  }, [confirmEnd, send, stopMic, stopProctor]);
 
   const live = phase !== "ending" && phase !== "ended" && phase !== "failed";
   const remaining = Math.max(0, maxMinutes * 60 - elapsed);
@@ -309,6 +336,12 @@ export function InterviewRoom({
               />
               {PHASE_LABEL[phase]}
             </span>
+            {cameraChecks && (
+              <span className="hidden items-center gap-1.5 text-[12px] text-fg-3 sm:flex" title="Face presence is checked on your device. No video leaves this browser.">
+                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-fg-4" />
+                Camera checks on
+              </span>
+            )}
             <span className="tnum font-mono text-[13px] text-fg" title="Time remaining">
               {mmss(remaining)}
             </span>

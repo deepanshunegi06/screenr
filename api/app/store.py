@@ -48,6 +48,7 @@ class Session:
     rubric: str
     ctx: InterviewContext
     consented: bool = False
+    proctoring_consented: bool = False
     started: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     ended_at: datetime | None = None
@@ -102,6 +103,7 @@ class Session:
             "candidate_name": self.candidate_name,
             "rubric": self.rubric,
             "consented": self.consented,
+            "proctoring_consented": self.proctoring_consented,
             "started": self.started,
             "created_at": _iso(self.created_at),
             "ended_at": _iso(self.ended_at),
@@ -157,6 +159,7 @@ class Session:
             rubric=row["rubric"],
             ctx=ctx,
             consented=row.get("consented", False),
+            proctoring_consented=row.get("proctoring_consented", False),
             started=row.get("started", False),
             created_at=_from_iso(row["created_at"]),
             ended_at=_from_iso(row.get("ended_at")),

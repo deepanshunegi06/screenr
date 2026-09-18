@@ -13,6 +13,7 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
   const { token } = use(params);
   const [intro, setIntro] = useState<InterviewIntro | null>(null);
   const [stage, setStage] = useState<Stage>("loading");
+  const [proctoring, setProctoring] = useState(false);
   // One AgentVoice for the page, unlocked inside the Start click.
   const [voice] = useState(() => new AgentVoice());
 
@@ -68,8 +69,9 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
       <Consent
         token={token}
         intro={intro}
-        onStart={async () => {
+        onStart={async (cameraChecks) => {
           await voice.unlock();
+          setProctoring(cameraChecks);
           setStage("live");
         }}
       />
@@ -82,6 +84,7 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
       candidate={intro.candidate}
       maxMinutes={intro.maxMinutes}
       voice={voice}
+      cameraChecks={proctoring}
       onFinished={() => setStage("done")}
     />
   );
@@ -109,9 +112,10 @@ function Consent({
 }: {
   token: string;
   intro: InterviewIntro;
-  onStart: () => Promise<void>;
+  onStart: (cameraChecks: boolean) => Promise<void>;
 }) {
   const [agreed, setAgreed] = useState(false);
+  const [cameraChecks, setCameraChecks] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
 
@@ -123,8 +127,8 @@ function Consent({
     setBusy(true);
     setProblem("");
     try {
-      if (!intro.consented) await api.consent(token, true);
-      await onStart();
+      if (!intro.consented) await api.consent(token, true, cameraChecks);
+      await onStart(cameraChecks);
     } catch (err) {
       setProblem(err instanceof Error ? err.message : "Couldn't start. Try again.");
       setBusy(false);
@@ -170,6 +174,23 @@ function Consent({
           Record and transcribe this conversation.
           <span className="mt-0.5 block text-[12px] text-fg-3">
             The text is kept with your application. Audio isn&apos;t stored.
+          </span>
+        </span>
+      </label>
+
+      <label className="mt-3 flex cursor-pointer gap-3 rounded-md border border-border bg-surface-2/50 p-3">
+        <input
+          type="checkbox"
+          checked={cameraChecks}
+          onChange={(e) => setCameraChecks(e.target.checked)}
+          className="mt-0.5 accent-accent"
+        />
+        <span className="text-[14px] text-fg">
+          Camera checks during the interview.
+          <span className="mt-0.5 block text-[12px] text-fg-3">
+            Optional. Runs entirely on your device — no video is sent or stored, only notes like
+            &quot;no one in frame for 12 seconds&quot;. Declining is fine and changes nothing about
+            your scoring.
           </span>
         </span>
       </label>

@@ -21,24 +21,33 @@ should look.
 
 ## Decision
 
-The only integrity signal collected is a tab or window switch of three seconds or
-more, reported by the candidate's browser. Camera-based checks were scoped out;
-the reasoning below is why they would be kept at arm's length if ever added.
+Two sources, both in the candidate's browser: tab or window switches of three
+seconds or more, and — only if the candidate opts in — face presence from
+MediaPipe's short-range detector running on their device.
 
 Enforced boundaries:
 
 1. Integrity events are stored on `Session.integrity`, never on the
    `InterviewContext` that `scoring.py` receives. The scoring input structurally
    cannot contain them.
-2. Only events are stored, never media: "tab hidden, 14s".
-3. No signal, alone or combined, rejects anyone. They surface next to the
+2. Video frames never leave the browser and are never stored. Only events, each
+   with a timestamp: "no one in frame for 12s", "2 people in frame",
+   "switched away for 14s".
+3. Camera checks have their own checkbox, separate from recording consent.
+   Declining runs the interview unproctored and changes nothing else.
+4. An absence has to last eight seconds before it counts, and the same condition
+   is reported at most once a minute. People lean out of frame to think.
+5. No signal, alone or combined, rejects anyone. They surface next to the
    transcript, with a timestamp, for a human to interpret.
 
 ## Signals deliberately not collected
 
-Gaze direction, emotion, attentiveness, stress, speech rate, filler-word counts.
-Each is either legally fraught, unreliable, or discriminatory against
-neurodivergent and disabled candidates, and none would improve a hiring decision.
+Gaze direction, emotion, attentiveness, stress, speech rate, filler-word counts,
+and any aggregate "suspicion score". MediaPipe offers landmarks that would make
+gaze estimation easy; it is left out on purpose. Uncalibrated gaze cannot tell
+reading a second monitor from thinking, and every one of these punishes
+neurodivergent and disabled candidates for how they behave rather than what they
+said. None would improve a hiring decision.
 
 ## Consequences
 

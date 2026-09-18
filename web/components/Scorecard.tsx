@@ -29,6 +29,14 @@ const DECISION_LABEL: Record<Decision, string> = {
   reject: "Reject",
 };
 
+// Plain words for the recruiter. The raw kind is a machine label.
+const INTEGRITY_LABEL: Record<string, string> = {
+  tab_hidden: "Switched away from the interview",
+  no_face: "No one in frame",
+  multiple_faces: "More than one person in frame",
+  camera_lost: "Camera stopped",
+};
+
 const WORDS = /[a-z0-9]+/g;
 
 /** The candidate turn a piece of evidence came from. Timestamps are stamped at
@@ -263,8 +271,11 @@ export function ScorecardView({
             <ul className="mt-2 space-y-1.5 text-[13px]">
               {card.integrity.map((f, i) => (
                 <li key={i} className="flex justify-between gap-3">
-                  <span className="text-fg">{f.detail}</span>
-                  <span className="tnum font-mono text-[12px] text-fg-3">{mmss(f.at)}</span>
+                  <span className="text-fg">
+                    {INTEGRITY_LABEL[f.kind] ?? f.kind}
+                    <span className="mt-0.5 block text-[12px] text-fg-3">{f.detail}</span>
+                  </span>
+                  <span className="tnum shrink-0 font-mono text-[12px] text-fg-3">{mmss(f.at)}</span>
                 </li>
               ))}
             </ul>

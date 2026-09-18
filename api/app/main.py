@@ -258,6 +258,9 @@ def evals(_: str = Depends(current_recruiter)) -> dict:
 class ConsentRequest(BaseModel):
     token: str
     recordingConsent: bool
+    # Separate and optional: camera checks are declinable and the interview runs
+    # either way. See docs/adr/005-proctoring-never-touches-scoring.md.
+    proctoringConsent: bool = False
 
 
 @app.get("/interview/{token}")
@@ -269,6 +272,7 @@ def interview_intro(token: str) -> dict:
         "roleTitle": session.ctx.role_title,
         "maxMinutes": get_settings().max_interview_seconds // 60,
         "consented": session.consented,
+        "proctoringConsented": session.proctoring_consented,
         "started": session.started,
         "finished": session.ctx.is_finished(),
     }
@@ -280,8 +284,9 @@ def give_consent(body: ConsentRequest) -> dict:
     if not body.recordingConsent:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "The interview needs recording consent")
     session.consented = True
+    session.proctoring_consented = body.proctoringConsent
     store.save(session)
-    return {"consented": True}
+    return {"consented": True, "proctoring": session.proctoring_consented}
 
 
 @app.get("/healthz")

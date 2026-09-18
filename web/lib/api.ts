@@ -174,6 +174,7 @@ export type InterviewIntro = {
   roleTitle: string;
   maxMinutes: number;
   consented: boolean;
+  proctoringConsented: boolean;
   started: boolean;
   finished: boolean;
 };
@@ -237,10 +238,10 @@ export const api = {
 
   interviewState: (token: string) => request<InterviewState>(`/interview/${token}/state`),
 
-  consent: (token: string, recordingConsent: boolean) =>
-    request<{ consented: boolean }>("/interview/consent", {
+  consent: (token: string, recordingConsent: boolean, proctoringConsent: boolean) =>
+    request<{ consented: boolean; proctoring: boolean }>("/interview/consent", {
       method: "POST",
-      body: JSON.stringify({ token, recordingConsent }),
+      body: JSON.stringify({ token, recordingConsent, proctoringConsent }),
     }),
 };
 
