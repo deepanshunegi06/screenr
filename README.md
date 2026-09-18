@@ -45,6 +45,12 @@ probed more than the strong candidate.
   and a coverage map that shows which skills were never reached
 - Recommends. A person decides, and that decision is the only one recorded.
 
+For the person doing the hiring: drop a PDF or Word résumé on the invite and the
+claims come out of it; paste a column of thirty addresses and get thirty links
+back, with a reason next to any row that failed; and `/compare` puts everyone who
+interviewed for a role under the same skill columns, because the real question is
+which of them to take forward.
+
 ## Rules that are enforced in code, not asked for in a prompt
 
 | Rule | Where it lives |
