@@ -51,6 +51,9 @@ BOOTSTRAP = "[The candidate has joined. Begin the interview.]"
 RECONNECT = "[The candidate has reconnected. Briefly pick up where you left off.]"
 SCAFFOLDING = {BOOTSTRAP, RECONNECT}
 
+# How long to let a closing line play before closing the socket anyway.
+CLOSING_LINE_TIMEOUT = 6.0
+
 # Tools whose effect cannot be walked back. Deepgram holds these until the
 # candidate has actually finished speaking.
 IRREVERSIBLE = {"end_interview"}
@@ -249,9 +252,17 @@ class DeepgramInterview:
                 self._last_frame = time.monotonic()
 
     async def request_end(self) -> None:
-        """The candidate chose to stop. Close warmly; the scorecard says why."""
+        """The candidate chose to stop. Close warmly, but promptly.
+
+        Deepgram refuses an injected message while the agent is mid-utterance, so
+        a closing line is best-effort. What is not optional is that the interview
+        is over the moment they ask: the stop reason is set first, and the pump
+        exits on its next frame or when the closing line finishes, whichever is
+        sooner.
+        """
         finish(self.session, "candidate_ended")
-        await self._send(
+        self._idle.clear()
+        spoke = await self._send(
             {
                 "type": "InjectAgentMessage",
                 "content": (
@@ -260,6 +271,8 @@ class DeepgramInterview:
                 ),
             }
         )
+        if not spoke:
+            self._idle.set()
 
     # --- output ------------------------------------------------------------------
 
@@ -275,10 +288,10 @@ class DeepgramInterview:
                     continue
                 await self._handle(json.loads(message))
                 if self.session.ctx.is_finished():
-                    # Let the closing line finish speaking before hanging up.
-                    self._idle.clear()
+                    # Let the closing line finish, but never hold the candidate on
+                    # a finished screen: they have already asked to stop.
                     with contextlib.suppress(TimeoutError):
-                        await asyncio.wait_for(self._idle.wait(), timeout=15)
+                        await asyncio.wait_for(self._idle.wait(), timeout=CLOSING_LINE_TIMEOUT)
                     break
         except websockets.ConnectionClosed:
             pass

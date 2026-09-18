@@ -7,13 +7,14 @@ import { AgentVoice, startMicrophone, type MicHandle } from "@/lib/audio";
 import { api, mmss, wsUrl } from "@/lib/api";
 
 type Line = { speaker: "agent" | "you"; text: string; tools?: string[] };
-type Phase = "connecting" | "listening" | "thinking" | "speaking" | "ended" | "failed";
+type Phase = "connecting" | "listening" | "thinking" | "speaking" | "ending" | "ended" | "failed";
 
 const PHASE_LABEL: Record<Phase, string> = {
   connecting: "Connecting",
   listening: "Listening",
   thinking: "Thinking",
   speaking: "Interviewer speaking",
+  ending: "Wrapping up",
   ended: "Finished",
   failed: "Disconnected",
 };
@@ -181,6 +182,7 @@ export function InterviewRoom({
             break;
           case "Finished":
             setPhase("ended");
+            stopMic();
             finishTimer = setTimeout(() => onFinishedRef.current(), 2600);
             break;
           case "Rejected":
@@ -280,9 +282,15 @@ export function InterviewRoom({
     }
     send({ type: "End" });
     setConfirmEnd(false);
-  }, [confirmEnd, send]);
+    stopMic();
+    // The server sends Finished once the closing line has played. Show the
+    // wrapping-up state immediately so the button is never clicked twice, and
+    // end anyway if that frame never arrives.
+    setPhase("ending");
+    setTimeout(() => setPhase((p) => (p === "ending" ? "ended" : p)), 12000);
+  }, [confirmEnd, send, stopMic]);
 
-  const live = phase !== "ended" && phase !== "failed";
+  const live = phase !== "ending" && phase !== "ended" && phase !== "failed";
   const remaining = Math.max(0, maxMinutes * 60 - elapsed);
   const progress = Math.min(100, (elapsed / (maxMinutes * 60)) * 100);
 
@@ -297,7 +305,7 @@ export function InterviewRoom({
                 aria-hidden
                 className={`h-2 w-2 rounded-full ${
                   phase === "failed" ? "bg-bad" : phase === "ended" ? "bg-fg-4" : "bg-ok"
-                } ${phase === "thinking" ? "animate-pulse" : ""}`}
+                } ${phase === "thinking" || phase === "ending" ? "animate-pulse" : ""}`}
               />
               {PHASE_LABEL[phase]}
             </span>
@@ -354,6 +362,12 @@ export function InterviewRoom({
             </div>
           )}
         </div>
+
+        {phase === "ending" && (
+          <p className="mt-8 rounded-md bg-surface px-4 py-3 text-[15px] text-fg shadow-sm">
+            Wrapping up — one moment.
+          </p>
+        )}
 
         {phase === "ended" && (
           <p className="mt-8 rounded-md bg-surface px-4 py-3 text-[15px] text-fg shadow-sm">

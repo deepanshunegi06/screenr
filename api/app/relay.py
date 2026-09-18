@@ -39,6 +39,9 @@ FORWARDED = {
 # Integrity events the browser may report. Anything else is dropped.
 INTEGRITY_KINDS = {"tab_hidden"}
 
+# How long the closing line gets before the socket is torn down regardless.
+END_GRACE_SECONDS = 8.0
+
 # Newest connection wins. A second tab or a reload whose old socket has not
 # closed yet would otherwise run two agents against one interview.
 _LIVE: dict[str, DeepgramInterview] = {}
@@ -166,6 +169,12 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
             await socket.close()
 
 
+async def _close_after(dg: DeepgramInterview, seconds: float) -> None:
+    await asyncio.sleep(seconds)
+    if dg.open:
+        await dg.close()
+
+
 async def _handle_browser_text(dg: DeepgramInterview, session: store.Session, raw: str) -> None:
     try:
         payload = json.loads(raw)
@@ -182,6 +191,9 @@ async def _handle_browser_text(dg: DeepgramInterview, session: store.Session, ra
 
     elif kind == "End":
         await dg.request_end()
+        # The pump normally notices and tells the browser. If Deepgram has gone
+        # quiet, close anyway rather than leaving them staring at a live screen.
+        asyncio.create_task(_close_after(dg, END_GRACE_SECONDS))
 
     elif kind == "Integrity":
         flag_kind = str(payload.get("kind", ""))
