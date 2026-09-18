@@ -12,6 +12,8 @@ deployment; for an MVP on one box, this is the whole persistence layer.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -25,11 +27,16 @@ from .config import get_settings
 from .roles import build_context
 
 _DB_PATH = Path(get_settings().data_dir) / "screenr.db"
+EVIDENCE_DIR = Path(get_settings().data_dir) / "evidence"
 _LOCK = threading.Lock()
 
 # A candidate controls how many integrity events their browser sends. Past this
 # it is noise, or an attempt to bury something in it.
 MAX_INTEGRITY_FLAGS = 200
+# Frames are much more expensive than flags, so they run out sooner. The first
+# forty are the ones that matter anyway.
+MAX_EVIDENCE_SHOTS = 40
+_SHOT_NAME = re.compile(r"[0-9a-f]{12}\.jpg")
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -252,6 +259,7 @@ def delete(session_id: str) -> bool:
     with _LOCK:
         _CONN.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         _CONN.commit()
+    shutil.rmtree(EVIDENCE_DIR / session_id, ignore_errors=True)
     return True
 
 
@@ -272,10 +280,37 @@ def finish(session: Session, reason: StopReason | None = None) -> None:
     save(session)
 
 
-def add_integrity_flag(session: Session, kind: str, detail: str) -> None:
+def add_integrity_flag(session: Session, kind: str, detail: str, shot: bytes | None = None) -> None:
     """Integrity events live on the session, never on the scorecard.
     See docs/adr/005-proctoring-never-touches-scoring.md."""
     if len(session.integrity) >= MAX_INTEGRITY_FLAGS:
         return
-    session.integrity.append(Flag(kind=kind, detail=detail[:200]))
+    session.integrity.append(Flag(kind=kind, detail=detail[:200], shot=_save_shot(session.id, shot)))
     save(session)
+
+
+def _save_shot(session_id: str, data: bytes | None) -> str | None:
+    """Write one camera frame to disk and return the name to remember it by.
+
+    A description of a warning is arguable; a photograph of the moment it fired
+    is not, which is the whole point of keeping these. The cap is there because
+    a browser decides when to send them.
+    """
+    if not data:
+        return None
+    folder = EVIDENCE_DIR / session_id
+    folder.mkdir(parents=True, exist_ok=True)
+    if len(list(folder.glob("*.jpg"))) >= MAX_EVIDENCE_SHOTS:
+        return None
+    name = f"{uuid.uuid4().hex[:12]}.jpg"
+    (folder / name).write_bytes(data)
+    return name
+
+
+def evidence_path(session_id: str, name: str) -> Path | None:
+    """Resolve a stored frame. Returns None rather than reaching outside the
+    evidence folder, whatever the name in the URL says."""
+    if not _SHOT_NAME.fullmatch(name):
+        return None
+    path = EVIDENCE_DIR / session_id / name
+    return path if path.is_file() else None

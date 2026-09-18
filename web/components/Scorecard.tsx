@@ -4,7 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CoverageMap } from "@/components/CoverageMap";
 import { Badge, Button, Card, Kbd, SectionTitle, Stat, Verdict } from "@/components/ui";
-import { ApiError, api, mmss, relativeTime, type Decision, type Scorecard, type TranscriptTurn } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  evidenceUrl,
+  mmss,
+  relativeTime,
+  type Decision,
+  type Scorecard,
+  type TranscriptTurn,
+} from "@/lib/api";
 
 const TOOL_LABEL: Record<string, string> = {
   record_evidence: "Recorded evidence",
@@ -136,8 +145,8 @@ export function ScorecardView({
             {card.skills.map((skill) => (
               <div key={skill.key} className="py-4 first:pt-0 last:pb-0">
                 <div className="flex items-baseline gap-3">
-                  <span className="tnum w-9 shrink-0 text-[15px] font-semibold text-fg">
-                    {skill.score === null ? <span className="text-fg-4">—</span> : skill.score.toFixed(1)}
+                  <span className="tnum w-11 shrink-0 text-[20px] font-medium tracking-[-0.02em] text-fg">
+                    {skill.score === null ? <span className="text-[15px] text-fg-4">—</span> : skill.score.toFixed(1)}
                   </span>
                   <span className="text-[14px] font-medium text-fg">{skill.name}</span>
                   {!skill.covered && <Badge>Not asked</Badge>}
@@ -145,29 +154,34 @@ export function ScorecardView({
                     <span className="text-[12px] text-fg-3">weight {skill.weight}</span>
                   )}
                 </div>
-                {skill.evidence.map((item, i) => (
-                  <div
-                    key={i}
-                    ref={(el) => {
-                      evidenceRefs.current[`${skill.key}-${i}`] = el;
-                    }}
-                    className="mt-3 pl-12"
-                  >
-                    <blockquote className="rounded-md border-l-2 border-accent bg-surface-2/60 px-3 py-2 text-[14px] leading-relaxed text-fg">
-                      {item.quote}
-                    </blockquote>
-                    <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px] text-fg-2">
-                      <span>{item.note}</span>
+                <div className="gutter mt-3">
+                  {skill.evidence.map((item, i) => (
+                    <div
+                      key={i}
+                      ref={(el) => {
+                        evidenceRefs.current[`${skill.key}-${i}`] = el;
+                      }}
+                      className="gutter-mark relative pb-4 last:pb-0"
+                    >
                       <button
                         onClick={() => jumpToTurn(item.quote, item.at)}
-                        className="font-mono text-[12px] text-accent hover:underline"
+                        title="Jump to this moment in the transcript"
+                        className="gutter-at pt-[3px] hover:text-accent hover:underline"
                       >
-                        {mmss(item.at)} in transcript
+                        {mmss(item.at)}
                       </button>
-                      <span className="tnum text-fg-3">scored {item.score}</span>
+                      <blockquote className="said text-fg">
+                        <span className="text-fg-4">“</span>
+                        {item.quote}
+                        <span className="text-fg-4">”</span>
+                      </blockquote>
+                      <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 text-[13px] text-fg-2">
+                        <span>{item.note}</span>
+                        <span className="tnum text-fg-3">scored {item.score}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -217,7 +231,7 @@ export function ScorecardView({
           {card.transcript.length === 0 ? (
             <p className="text-[13px] text-fg-3">Nothing yet.</p>
           ) : (
-            <div className="divide-y divide-border">
+            <div className="gutter divide-y divide-border">
               {card.transcript.map((turn, i) => (
                 <TurnRow
                   key={i}
@@ -235,7 +249,7 @@ export function ScorecardView({
 
       <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start print:hidden">
         <Card>
-          <div className="text-[12px] font-medium text-fg-2">Agent recommendation</div>
+          <div className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">Agent recommendation</div>
           <div className="mt-2 flex items-center gap-2">
             {live ? <Badge tone="accent" dot>In progress</Badge> : <Verdict value={card.recommendation} />}
           </div>
@@ -258,7 +272,7 @@ export function ScorecardView({
         {!live && <DecisionPanel key={card.decision ?? "undecided"} card={card} onChanged={onChanged} />}
 
         <Card>
-          <div className="text-[12px] font-medium text-fg-2">Details</div>
+          <div className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">Details</div>
           <dl className="mt-2 space-y-1.5 text-[13px]">
             <Row k="Email" v={card.candidateEmail} />
             <Row k="Role" v={card.role_title} />
@@ -272,14 +286,36 @@ export function ScorecardView({
 
         {card.integrity.length > 0 && (
           <Card>
-            <div className="text-[12px] font-medium text-fg-2">Integrity signals</div>
+            <div className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">Integrity signals</div>
             <p className="mt-1 text-[12px] text-fg-3">
               Browser observations for your judgement. Not part of any score.
             </p>
-            <ul className="mt-2 space-y-1.5 text-[13px]">
+            <ul className="mt-2 space-y-2.5 text-[13px]">
               {card.integrity.map((f, i) => (
-                <li key={i} className="flex justify-between gap-3">
-                  <span className="text-fg">
+                <li key={i} className="flex gap-2.5">
+                  {f.shot ? (
+                    <a
+                      href={evidenceUrl(card.session_id, f.shot)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Open the full frame"
+                      className="shrink-0"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={evidenceUrl(card.session_id, f.shot)}
+                        alt={`Camera frame when ${(INTEGRITY_LABEL[f.kind] ?? f.kind).toLowerCase()} was flagged`}
+                        className="h-12 w-16 rounded border border-border object-cover"
+                      />
+                    </a>
+                  ) : (
+                    <span
+                      aria-hidden
+                      title="No camera running at this moment"
+                      className="h-12 w-16 shrink-0 rounded border border-dashed border-border"
+                    />
+                  )}
+                  <span className="min-w-0 flex-1 text-fg">
                     {INTEGRITY_LABEL[f.kind] ?? f.kind}
                     <span className="mt-0.5 block text-[12px] text-fg-3">{f.detail}</span>
                   </span>
@@ -355,7 +391,7 @@ function DecisionPanel({ card, onChanged }: { card: Scorecard; onChanged: () => 
 
   return (
     <Card>
-      <div className="text-[12px] font-medium text-fg-2">Your decision</div>
+      <div className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">Your decision</div>
       {!editing && card.decision ? (
         <div className="mt-2">
           <div className="flex items-center gap-2">
@@ -412,14 +448,26 @@ function TurnRow({
   return (
     <div
       id={`turn-${index}`}
-      className={`flex gap-4 py-3 transition-colors first:pt-0 last:pb-0 ${highlighted ? "-mx-2 rounded-md bg-accent-soft px-2" : ""}`}
+      className={`relative py-3.5 transition-colors first:pt-0 last:pb-0 ${
+        highlighted ? "bg-accent-soft" : ""
+      }`}
     >
-      <span className="tnum w-10 shrink-0 pt-0.5 font-mono text-[12px] text-fg-3">{mmss(turn.at)}</span>
-      <div className="min-w-0 flex-1">
-        <div className="mb-0.5 text-[12px] font-medium text-fg-3">
+      <span className="gutter-at pt-[3px]">{mmss(turn.at)}</span>
+      <div className="min-w-0">
+        <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">
           {isAgent ? "Interviewer" : isSystem ? "System" : candidate}
         </div>
-        <p className={`text-[14px] leading-relaxed ${isSystem ? "font-mono text-[12px] text-fg-3" : "text-fg"}`}>
+        {/* The candidate's own words get the reading face. The interviewer's
+            questions are apparatus, and read as such. */}
+        <p
+          className={
+            isSystem
+              ? "font-mono text-[12px] leading-relaxed text-fg-3"
+              : isAgent
+                ? "text-[14px] leading-relaxed text-fg-2"
+                : "said text-fg"
+          }
+        >
           {turn.text}
         </p>
         {showTools && turn.tools.length > 0 && (

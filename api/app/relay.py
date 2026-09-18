@@ -11,6 +11,8 @@ exists rather than the page connecting to Deepgram directly.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import json
 import logging
@@ -51,6 +53,31 @@ INTEGRITY_KINDS = {
     "camera_lost",
     "audio_device_changed",
 }
+
+# A camera frame attached to a warning, as a data URL. Small on purpose: the
+# browser sends 320x240 JPEG, which is plenty to see who was in the chair and
+# where they were looking, and small enough to ride the same socket as audio.
+_SHOT_PREFIX = "data:image/jpeg;base64,"
+_JPEG_MAGIC = bytes.fromhex("ffd8ff")
+MAX_SHOT_BYTES = 300_000
+
+
+def _decode_shot(value: object) -> bytes | None:
+    """The frame the browser claims to have taken, or nothing.
+
+    Everything here arrives from the candidate's own machine, so a frame is
+    accepted only if it is really JPEG-shaped and really small.
+    """
+    if not isinstance(value, str) or not value.startswith(_SHOT_PREFIX):
+        return None
+    try:
+        data = base64.b64decode(value[len(_SHOT_PREFIX) :], validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not data or len(data) > MAX_SHOT_BYTES or not data.startswith(_JPEG_MAGIC):
+        return None
+    return data
+
 
 # Newest connection wins. A second tab or a reload whose old socket has not
 # closed yet would otherwise run two agents against one interview.
@@ -218,7 +245,12 @@ async def _handle_browser_text(
     elif kind == "Integrity":
         flag_kind = str(payload.get("kind", ""))
         if flag_kind in INTEGRITY_KINDS:
-            store.add_integrity_flag(session, flag_kind, str(payload.get("detail", ""))[:200])
+            store.add_integrity_flag(
+                session,
+                flag_kind,
+                str(payload.get("detail", ""))[:200],
+                _decode_shot(payload.get("shot")),
+            )
 
 
 @router.get("/interview/{token}/state")

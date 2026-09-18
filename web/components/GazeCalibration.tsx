@@ -269,7 +269,8 @@ export function GazeCalibration({
       </div>
 
       <p className="px-5 pb-5 text-center text-[12px] text-white/40">
-        This runs on your device. No video is sent or stored.
+        This runs on your device. Nothing is recorded — but if a warning fires, the
+        picture at that moment is saved for the reviewer.
       </p>
     </div>
   );

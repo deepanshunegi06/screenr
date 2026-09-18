@@ -1,9 +1,13 @@
 /**
  * Camera checks, entirely on the candidate's device.
  *
- * MediaPipe's face landmarker runs in this tab. Frames are never uploaded, never
- * stored, and never reach our server — only events, each with the time it
- * happened: no_face, multiple_faces, looking_away, camera_lost.
+ * MediaPipe's face landmarker runs in this tab. The video stream is never
+ * uploaded: what leaves the browser is an event with the time it happened —
+ * no_face, multiple_faces, looking_away, camera_lost — and, at the moment a
+ * warning fires, one still frame of that moment. Nothing in between is kept.
+ *
+ * That single frame is the difference between a log line a candidate can
+ * dispute and a photograph they cannot.
  *
  * Gaze estimation lives in lib/gaze.ts; this file owns the camera, the model,
  * feature extraction from landmarks, and the timing rules that decide when a
@@ -106,8 +110,14 @@ export type Reading = { faces: number; features: GazeFeatures | null };
 export type GazeTracker = {
   stream: MediaStream;
   read: () => Reading;
+  /** One still frame as a JPEG data URL, captioned with why it was taken. */
+  grab: (caption: string) => string | null;
   stop: () => void;
 };
+
+/** Wide enough to recognise a face and read the room behind it, small enough
+ *  that sending one mid-interview costs nothing. */
+const SHOT_WIDTH = 320;
 
 export async function createTracker(): Promise<GazeTracker> {
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -132,8 +142,32 @@ export async function createTracker(): Promise<GazeTracker> {
     outputFacialTransformationMatrixes: true,
   });
 
+  const canvas = document.createElement("canvas");
+
   return {
     stream,
+    grab: (caption: string) => {
+      // Not mirrored: the self-view is flipped so it feels like a mirror, but
+      // evidence should be what the camera actually saw.
+      if (video.readyState < 2 || !video.videoWidth) return null;
+      const scale = SHOT_WIDTH / video.videoWidth;
+      canvas.width = SHOT_WIDTH;
+      canvas.height = Math.round(video.videoHeight * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Burnt in, so the frame still says what it is after someone has pasted
+      // it into an email and lost every bit of surrounding context.
+      const line = `${new Date().toLocaleString()} — ${caption}`;
+      ctx.font = "11px sans-serif";
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.fillRect(0, canvas.height - 18, canvas.width, 18);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(line.slice(0, 58), 6, canvas.height - 5);
+
+      return canvas.toDataURL("image/jpeg", 0.6);
+    },
     read: () => {
       if (video.readyState < 2) return { faces: 0, features: null };
       let result;

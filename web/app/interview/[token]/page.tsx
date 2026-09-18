@@ -72,7 +72,7 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
   if (stage === "invalid") {
     return (
       <Frame>
-        <h1 className="text-[18px] font-semibold text-fg">This link isn&apos;t valid any more</h1>
+        <h1 className="display text-[24px] text-fg">This link isn&apos;t valid any more</h1>
         <p className="mt-2 text-[14px] text-fg-2">Ask whoever invited you to send a new one.</p>
       </Frame>
     );
@@ -83,7 +83,7 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
   if (stage === "done") {
     return (
       <Frame>
-        <h1 className="text-[18px] font-semibold text-fg">
+        <h1 className="display text-[24px] leading-tight text-fg">
           Thanks, {intro.candidate}. That&apos;s the end.
         </h1>
         <p className="mt-2 text-[14px] leading-relaxed text-fg-2">
@@ -175,32 +175,29 @@ function Consent({
 
   return (
     <Frame>
-      <div className="text-[12px] font-medium text-fg-2">{intro.roleTitle}</div>
-      <h1 className="mt-1 text-[18px] font-semibold text-fg">
+      <div className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">{intro.roleTitle}</div>
+      <h1 className="display mt-1.5 text-[26px] leading-tight text-fg">
         Hello {intro.candidate}. Here&apos;s how this works.
       </h1>
 
-      <ol className="mt-5 space-y-3 text-[14px] leading-relaxed text-fg">
-        <li className="flex gap-3">
-          <span className="tnum w-4 shrink-0 text-fg-3">1</span>
+      {/* Four facts, not four steps -- so no numbers, just hairlines. */}
+      <ul className="mt-5 divide-y divide-border text-[14px] leading-relaxed text-fg">
+        <li className="py-3 first:pt-0">
           You&apos;ll talk with an AI interviewer for up to {intro.maxMinutes} minutes. It asks
           follow-up questions based on your answers, so there&apos;s no fixed list.
         </li>
-        <li className="flex gap-3">
-          <span className="tnum w-4 shrink-0 text-fg-3">2</span>
+        <li className="py-3">
           It writes down what you say. Every note it makes has to point at something you actually
           said.
         </li>
-        <li className="flex gap-3">
-          <span className="tnum w-4 shrink-0 text-fg-3">3</span>
+        <li className="py-3">
           It doesn&apos;t decide anything. A person reads the transcript and makes the call.
         </li>
-        <li className="flex gap-3">
-          <span className="tnum w-4 shrink-0 text-fg-3">4</span>
+        <li className="py-3">
           Say &quot;I don&apos;t know&quot; when you don&apos;t. Honesty scores better than a
           confident guess.
         </li>
-      </ol>
+      </ul>
 
       <div className="mt-5 rounded-md border border-border bg-surface-2/60 p-3">
         <div className="text-[13px] font-medium text-fg">Before you start</div>
@@ -241,7 +238,8 @@ function Consent({
           <span className="mt-0.5 block text-[12px] text-fg-3">
             Optional. You&apos;ll look at four points first, so the checks know where your eyes sit.
             After that, looking away from the screen also costs a warning. Everything runs on your
-            device — no video is sent or stored. Declining is fine and changes nothing about your
+            device, and nothing is recorded — but if a warning fires, the picture at that moment
+            is saved for whoever reviews this. Declining is fine and changes nothing about your
             scoring.
           </span>
         </span>

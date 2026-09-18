@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field, TypeAdapter, ValidationError
 
 from . import store
@@ -15,6 +16,7 @@ from .auth import (
     current_recruiter,
     issue_candidate_token,
     issue_recruiter_token,
+    recruiter_from_query,
     verify_login,
 )
 from .config import get_settings
@@ -207,6 +209,19 @@ def create_sessions(body: BulkInviteRequest, _: str = Depends(current_recruiter)
     return {"created": created, "failed": failed}
 
 
+@app.get("/sessions/{session_id}/evidence/{name}")
+def evidence(session_id: str, name: str, _: str = Depends(recruiter_from_query)) -> FileResponse:
+    """The camera frame taken when a warning fired.
+
+    "The system glitched" is a hard argument to have without one, and an easy
+    one to settle with it.
+    """
+    path = store.evidence_path(session_id, name)
+    if path is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such frame")
+    return FileResponse(path, media_type="image/jpeg")
+
+
 @app.get("/sessions")
 def list_sessions(_: str = Depends(current_recruiter)) -> list[dict]:
     return [_row(s) for s in store.all_sessions()]
@@ -275,6 +290,7 @@ async def get_scorecard(session_id: str, _: str = Depends(current_recruiter)) ->
             "kind": f.kind,
             "detail": f.detail,
             "at": max(0, int((f.at - session.ctx.started_at).total_seconds())),
+            "shot": f.shot,
         }
         for f in session.integrity
     ]

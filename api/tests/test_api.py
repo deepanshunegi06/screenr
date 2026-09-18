@@ -259,3 +259,49 @@ def test_compare_groups_candidates_by_role(auth):
     assert all(c["finished"] or c["durationSeconds"] >= 0 for c in body["candidates"])
 
     assert client.get("/compare", params={"rubric": "nope"}, headers=auth).status_code == 400
+
+
+def test_warning_frames_are_stored_and_served(auth):
+    """A warning with a photograph attached is the point of the feature."""
+    from app import relay, store
+
+    res = client.post(
+        "/sessions", json={"candidateEmail": "shot@test.edu", "rubric": "backend_intern"}, headers=auth
+    )
+    session_id = res.json()["sessionId"]
+    session = store.get(session_id)
+    store.start(session)
+
+    # Smallest thing that is really a JPEG: the magic bytes are checked, the
+    # rest of the file is never parsed.
+    jpeg = bytes.fromhex("ffd8ff") + b"not really an image, but shaped like one"
+    store.add_integrity_flag(session, "looking_away", "Looked away for 5s", jpeg)
+    store.add_integrity_flag(session, "paste", "Pasted 200 characters")
+
+    card = client.get(f"/sessions/{session_id}", headers=auth).json()
+    flagged, unflagged = card["integrity"]
+    assert unflagged["shot"] is None
+    assert flagged["shot"]
+
+    got = client.get(f"/sessions/{session_id}/evidence/{flagged['shot']}", headers=auth)
+    assert got.status_code == 200
+    assert got.content == jpeg
+
+    # An <img> cannot send a header, so the same token is allowed in the query.
+    token = auth["Authorization"].split()[1]
+    assert client.get(f"/sessions/{session_id}/evidence/{flagged['shot']}?token={token}").status_code == 200
+    assert client.get(f"/sessions/{session_id}/evidence/{flagged['shot']}").status_code == 401
+
+    # Nothing outside the session's own folder, whatever the URL asks for.
+    assert store.evidence_path(session_id, "../../screenr.db") is None
+    assert store.evidence_path(session_id, "nope.jpg") is None
+
+    # Deleting the interview takes its frames with it.
+    assert (store.EVIDENCE_DIR / session_id).exists()
+    client.delete(f"/sessions/{session_id}", headers=auth)
+    assert not (store.EVIDENCE_DIR / session_id).exists()
+
+    # Anything that is not a small JPEG data URL is refused before it is stored.
+    assert relay._decode_shot("data:image/png;base64,iVBORw0KGgo=") is None
+    assert relay._decode_shot("not a data url") is None
+    assert relay._decode_shot(None) is None

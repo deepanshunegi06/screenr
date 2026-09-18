@@ -87,6 +87,21 @@ def current_recruiter(
     return _decode(credentials.credentials, "recruiter")["sub"]
 
 
+def recruiter_from_query(
+    token: str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+) -> str:
+    """Same trust as current_recruiter, for URLs a browser fetches on its own.
+
+    An <img src> cannot carry an Authorization header, so evidence images accept
+    the same recruiter token as a query parameter instead.
+    """
+    raw = token or (credentials.credentials if credentials else None)
+    if not raw:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in first")
+    return _decode(raw, "recruiter")["sub"]
+
+
 def candidate_session_id(token: str) -> str:
     """Resolve an invite token to the one session it may touch."""
     return _decode(token, "candidate")["sub"]

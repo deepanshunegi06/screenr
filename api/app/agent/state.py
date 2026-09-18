@@ -72,6 +72,9 @@ class Flag:
     kind: str
     detail: str
     at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Filename of the camera frame captured at this moment, if one was. The
+    # image lives on disk, not here: a session row is rewritten on every save.
+    shot: str | None = None
 
 
 @dataclass

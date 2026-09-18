@@ -112,7 +112,13 @@ export type TranscriptTurn = {
   tools: string[];
 };
 
-export type IntegrityFlag = { kind: string; detail: string; at: number };
+export type IntegrityFlag = { kind: string; detail: string; at: number; shot: string | null };
+
+/** The camera frame saved when a warning fired. An <img> cannot send an
+ *  Authorization header, so the token rides in the query instead. */
+export function evidenceUrl(sessionId: string, shot: string): string {
+  return `${BASE}/sessions/${sessionId}/evidence/${shot}?token=${encodeURIComponent(readToken() ?? "")}`;
+}
 
 export type Usage = { agentHours: number; ttsCharacters: number; requests: number; costUsd: number } | null;
 

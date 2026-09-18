@@ -80,11 +80,15 @@ export function InterviewRoom({
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const warningsRef = useRef(0);
+  // Read inside handleSignal, which must not be rebuilt every time the camera
+  // changes -- it is a dependency of the socket effect.
+  const trackerRef = useRef(tracker);
   const endedRef = useRef(false);
   const onFinishedRef = useRef(onFinished);
   useEffect(() => {
     onFinishedRef.current = onFinished;
-  }, [onFinished]);
+    trackerRef.current = tracker;
+  }, [onFinished, tracker]);
 
   const send = useCallback((frame: object) => {
     const ws = socket.current;
@@ -144,7 +148,9 @@ export function InterviewRoom({
   const handleSignal = useCallback(
     (kind: string, detail: string, violation: boolean) => {
       if (endedRef.current) return;
-      send({ type: "Integrity", kind, detail });
+      // A frame goes with anything that spends a warning. Whoever reviews this
+      // should be looking at the moment, not at a description of it.
+      send({ type: "Integrity", kind, detail, shot: violation ? trackerRef.current?.grab(detail) : null });
       if (!violation) return;
 
       const count = warningsRef.current + 1;
@@ -435,7 +441,7 @@ export function InterviewRoom({
           )}
 
           {lines.length === 0 && (
-            <p className="text-[15px] text-fg-2">
+            <p className="said text-fg-3">
               {phase === "connecting"
                 ? "Connecting to your interviewer."
                 : "Your interviewer will speak first. Answer out loud when it does."}
@@ -445,12 +451,10 @@ export function InterviewRoom({
           <div aria-live="polite" className="space-y-6">
             {lines.map((line, i) => (
               <div key={i}>
-                <div className="mb-1 text-[12px] font-medium text-fg-3">
+                <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">
                   {line.speaker === "agent" ? "Interviewer" : candidate}
                 </div>
-                <p className={`text-[15px] leading-relaxed ${line.speaker === "agent" ? "text-fg" : "text-fg-2"}`}>
-                  {line.text}
-                </p>
+                <p className={line.speaker === "agent" ? "said text-fg" : "said text-fg-2"}>{line.text}</p>
                 {line.tools && line.tools.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {line.tools.map((t) => (
@@ -497,7 +501,8 @@ export function InterviewRoom({
                 maxWarnings={MAX_WARNINGS}
               />
               <p className="mt-2 w-[164px] text-[11px] leading-snug text-fg-3">
-                Checks run on your device. No video is sent or stored.
+                Checks run on your device. Nothing is recorded — a warning saves the
+                picture at that moment.
               </p>
             </div>
           </aside>
