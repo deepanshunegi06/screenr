@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -84,7 +85,11 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
         await socket.close()
         return
 
-    session.started = True
+    if not session.started:
+        session.started = True
+        # The clock starts when they arrive, not when the link was created --
+        # otherwise every scorecard reports the wait as interview time.
+        session.ctx.started_at = datetime.now(UTC)
     dg.start_watchdog()
     dg.start_quiet_watch()
     pump = asyncio.create_task(dg.pump())

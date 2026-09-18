@@ -20,7 +20,7 @@ function toScorecard(raw: Record<string, any>): Scorecard {
     escalationNote: raw.escalation_note ?? null,
     durationSeconds: Math.max(raw.duration_seconds ?? 0, 60),
     turns: raw.turns ?? 0,
-    costUsd: raw.cost_usd ?? 0,
+    costUsd: raw.usage?.costUsd ?? 0,
     skills: (raw.skills ?? []).map((s: any) => ({
       key: s.key,
       name: s.name,
