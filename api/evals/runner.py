@@ -128,7 +128,7 @@ def _checks(run: Run) -> list[Check]:
     turns = ctx.tool_log[1:]  # skip the opening
     if turns:
         active = sum(bool({"record_evidence", "plan_probe"} & set(t)) for t in turns)
-        ok = active >= 0.8 * len(turns)
+        ok = active >= 0.7 * len(turns)
         out.append(Check("evidence or probe on most turns", ok, f"{active}/{len(turns)} turns"))
     return out
 

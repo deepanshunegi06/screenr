@@ -59,8 +59,14 @@ def run_personas(names: list[str], json_path: str | None) -> int:
     chosen = p.ALL if names == ["all"] else [lookup[n] for n in names]
 
     runs = []
+    errored: list[str] = []
     for persona in chosen:
-        run = run_interview(persona, max_turns=10)
+        try:
+            run = run_interview(persona, max_turns=14)
+        except Exception as exc:  # a provider outage on one persona must not lose the others
+            print(f"=== {persona.name} === ERROR {type(exc).__name__}: {str(exc)[:200]}")
+            errored.append(persona.name)
+            continue
         runs.append(run)
         print(run.pretty())
         _print_card(run.scorecard)
@@ -79,7 +85,7 @@ def run_personas(names: list[str], json_path: str | None) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
         print(f"report written to {out}")
-    return 1 if failed else 0
+    return 1 if (failed or errored) else 0
 
 
 def run_live(rubric: str, resume_path: str | None) -> int:
