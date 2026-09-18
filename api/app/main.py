@@ -16,6 +16,7 @@ from .auth import (
 )
 from .config import get_settings
 from .scoring import build_scorecard
+from .usage import session_usage
 from .voice import router as voice_router
 
 app = FastAPI(
@@ -121,12 +122,14 @@ def list_sessions(_: str = Depends(current_recruiter)) -> list[dict]:
 
 
 @app.get("/sessions/{session_id}")
-def get_scorecard(session_id: str, _: str = Depends(current_recruiter)) -> dict:
+async def get_scorecard(session_id: str, _: str = Depends(current_recruiter)) -> dict:
     session = _require(session_id)
     card = build_scorecard(session.ctx)
     card["candidate"] = session.candidate_name
     card["transcript"] = session.transcript
     card["decision"] = session.decision
+    # Measured from Deepgram, not estimated from our own clock.
+    card["usage"] = await session_usage(session.id)
     # Kept out of build_scorecard on purpose: see docs/adr/005.
     card["integrity"] = [
         {"kind": f.kind, "detail": f.detail, "at": 0} for f in session.ctx.flags

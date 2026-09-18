@@ -169,6 +169,7 @@ class DeepgramInterview:
         self._idle = asyncio.Event()
         self._idle.set()
         self._silence_task: asyncio.Task | None = None
+        self._watchdog_task: asyncio.Task | None = None
 
     async def connect(self, resume: bool = False) -> None:
         settings = get_settings()
@@ -185,6 +186,45 @@ class DeepgramInterview:
     async def send_audio(self, chunk: bytes) -> None:
         if self.ws:
             await self.ws.send(chunk)
+
+    def start_watchdog(self) -> None:
+        """Enforce the duration and turn caps on the voice path.
+
+        These caps live in the typed driver's turn loop, which Deepgram never
+        calls -- so without this a voice interview has no time limit at all. A
+        guardrail that silently does not apply is worse than none, because
+        everyone assumes it is working.
+        """
+
+        async def watch() -> None:
+            settings = get_settings()
+            while self.ws and not self.session.ctx.is_finished():
+                await asyncio.sleep(5)
+                ctx = self.session.ctx
+                if ctx.elapsed_seconds() >= settings.max_interview_seconds:
+                    ctx.stop_reason = "duration_cap"
+                elif ctx.turn_count >= settings.max_turns:
+                    ctx.stop_reason = "turn_cap"
+                else:
+                    continue
+
+                # Close out loud rather than dropping the line on someone.
+                if self.ws:
+                    await self.ws.send(
+                        json.dumps(
+                            {
+                                "type": "InjectAgentMessage",
+                                "content": (
+                                    "That is all the time we have. Thanks for walking me "
+                                    "through your work -- someone from the team will follow "
+                                    "up with next steps."
+                                ),
+                            }
+                        )
+                    )
+                return
+
+        self._watchdog_task = asyncio.create_task(watch())
 
     async def inject_text(self, text: str, timeout: float = 60.0) -> None:
         """Drive a turn without audio.
@@ -309,9 +349,10 @@ class DeepgramInterview:
         )
 
     async def close(self) -> None:
-        if self._silence_task:
-            self._silence_task.cancel()
-            self._silence_task = None
+        for task in (self._silence_task, self._watchdog_task):
+            if task:
+                task.cancel()
+        self._silence_task = self._watchdog_task = None
         self._idle.set()
         if self.ws:
             try:

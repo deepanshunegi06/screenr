@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # The model Deepgram runs for voice interviews. Separate from llm_model:
     # that one names a model on OUR provider, this one names a model on theirs.
     voice_think_model: str = "gemini-3.1-flash-lite"
+    # Needed to read per-session usage back out of Deepgram.
+    deepgram_project_id: str = ""
     # Where Deepgram calls us back for each turn. Must be publicly reachable.
     public_api_url: str = "http://localhost:8000"
 
