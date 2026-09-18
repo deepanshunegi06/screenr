@@ -45,6 +45,11 @@ probed more than the strong candidate.
   and a coverage map that shows which skills were never reached
 - Recommends. A person decides, and that decision is the only one recorded.
 
+Roles are editable in the app: paste a job description and the skills come out
+drafted, or write them by hand. Shipped roles stay read-only; yours are written
+as YAML next to the database, so they survive a restart and can still be edited
+in an editor.
+
 For the person doing the hiring: drop a PDF or Word résumé on the invite and the
 claims come out of it; paste a column of thirty addresses and get thirty links
 back, with a reason next to any row that failed; and `/compare` puts everyone who

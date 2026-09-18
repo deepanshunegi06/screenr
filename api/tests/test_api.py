@@ -344,3 +344,81 @@ def test_a_failed_eval_run_keeps_the_last_report(tmp_path, monkeypatch):
     assert "429" in state["error"]
     # The whole point: the good report survived.
     assert json.loads(report.read_text())["summary"]["passed"] == 2
+
+
+def test_roles_can_be_created_edited_and_deleted(auth):
+    body = {
+        "title": "Data analyst intern",
+        "skills": [
+            {
+                "name": "SQL and data modelling",
+                "what_good_looks_like": (
+                    "Describes a join they actually needed and why the tables split that way."
+                ),
+            },
+            {
+                "name": "Communication",
+                "what_good_looks_like": "Explains a result to someone who has never seen the dataset.",
+                "weight": 0.5,
+                "cross_cutting": True,
+            },
+        ],
+    }
+    res = client.post("/roles", json=body, headers=auth)
+    assert res.status_code == 200, res.text
+    created = res.json()
+    assert created["key"] == "data_analyst_intern"
+    assert created["builtin"] is False
+
+    # It is a real role now: an interview can be booked against it.
+    invite = client.post(
+        "/sessions",
+        json={"candidateEmail": "analyst@test.edu", "rubric": "data_analyst_intern"},
+        headers=auth,
+    )
+    assert invite.status_code == 200, invite.text
+
+    # Same title twice is a conflict, not a silent overwrite.
+    assert client.post("/roles", json=body, headers=auth).status_code == 409
+
+    body["title"] = "Data analyst intern"
+    body["skills"][0]["name"] = "SQL and modelling"
+    assert client.put("/roles/data_analyst_intern", json=body, headers=auth).status_code == 200
+
+    # Shipped roles are read-only from the API, whatever the request says.
+    assert client.put("/roles/backend_intern", json=body, headers=auth).status_code == 400
+    assert client.delete("/roles/backend_intern", headers=auth).status_code == 400
+
+    assert client.delete("/roles/data_analyst_intern", headers=auth).status_code == 200
+    assert "data_analyst_intern" not in [r["key"] for r in client.get("/roles", headers=auth).json()]
+
+    # The scorecard of an interview booked against a deleted role still loads:
+    # a session carries its own copy of the skills.
+    card = client.get(f"/sessions/{invite.json()['sessionId']}", headers=auth)
+    assert card.status_code == 200
+    assert card.json()["role_title"] == "Data analyst intern"
+
+
+def test_a_role_needs_something_to_ask_about(auth):
+    """A rubric of only cross-cutting skills has no question to open with."""
+    res = client.post(
+        "/roles",
+        json={
+            "title": "Vibes only",
+            "skills": [
+                {
+                    "name": "Communication",
+                    "what_good_looks_like": "Explains things clearly to a non-expert audience.",
+                    "cross_cutting": True,
+                },
+                {
+                    "name": "Attitude",
+                    "what_good_looks_like": "Seems enthusiastic about the work and the team.",
+                    "cross_cutting": True,
+                },
+            ],
+        },
+        headers=auth,
+    )
+    assert res.status_code == 400
+    assert "askable" in res.json()["detail"]

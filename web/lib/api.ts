@@ -177,11 +177,23 @@ export type Comparison = {
   candidates: CompareRow[];
 };
 
+export type RoleSkill = {
+  key: string;
+  name: string;
+  weight: number;
+  cross_cutting: boolean;
+  what_good_looks_like: string;
+};
+
 export type Role = {
   key: string;
   title: string;
-  skills: { key: string; name: string; weight: number; cross_cutting: boolean; what_good_looks_like: string }[];
+  /** Shipped with the app, and read-only. */
+  builtin?: boolean;
+  skills: RoleSkill[];
 };
+
+export type RoleDraft = { key: string; title: string; skills: RoleSkill[] };
 
 export type EvalRun = {
   persona: string;
@@ -302,6 +314,17 @@ export const api = {
   deleteSession: (id: string) => request<{ deleted: string }>(`/sessions/${id}`, { method: "DELETE" }, true),
 
   roles: () => request<Role[]>("/roles", {}, true),
+
+  createRole: (body: { title: string; skills: Omit<RoleSkill, "key">[] }) =>
+    request<Role>("/roles", { method: "POST", body: JSON.stringify(body) }, true),
+
+  updateRole: (key: string, body: { title: string; skills: Omit<RoleSkill, "key">[] }) =>
+    request<Role>(`/roles/${key}`, { method: "PUT", body: JSON.stringify(body) }, true),
+
+  deleteRole: (key: string) => request<{ deleted: string }>(`/roles/${key}`, { method: "DELETE" }, true),
+
+  draftRole: (jobDescription: string) =>
+    request<RoleDraft>("/roles/draft", { method: "POST", body: JSON.stringify({ jobDescription }) }, true),
 
   evals: () => request<EvalReport>("/evals", {}, true),
 

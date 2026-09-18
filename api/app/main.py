@@ -22,7 +22,15 @@ from .auth import (
 from .config import get_settings
 from .relay import router as relay_router
 from .resumes import extract, guess_name
-from .roles import list_rubrics, load_rubric
+from .roledraft import draft_rubric
+from .roles import (
+    delete_rubric,
+    is_builtin,
+    list_rubrics,
+    load_rubric,
+    save_rubric,
+    slugify,
+)
 from .scoring import build_scorecard
 from .usage import session_usage
 
@@ -341,28 +349,98 @@ def delete_session(session_id: str, _: str = Depends(current_recruiter)) -> dict
 # --- recruiter: roles and evals ------------------------------------------------------
 
 
-@app.get("/roles")
-def roles(_: str = Depends(current_recruiter)) -> list[dict]:
-    out = []
-    for key in list_rubrics():
-        title, skills = load_rubric(key)
-        out.append(
-            {
-                "key": key,
-                "title": title,
-                "skills": [
+class SkillBody(BaseModel):
+    name: str = Field(max_length=60)
+    what_good_looks_like: str = Field(max_length=600)
+    weight: float = 1.0
+    cross_cutting: bool = False
+
+
+class RoleBody(BaseModel):
+    """A role a recruiter wrote.
+
+    `what_good_looks_like` is the field that matters: it goes into the system
+    prompt verbatim and is what the interviewer probes against. A vague one
+    produces a vague interview.
+    """
+
+    title: str = Field(max_length=80)
+    skills: list[SkillBody] = Field(min_length=2, max_length=8)
+
+
+def _role(key: str) -> dict:
+    title, skills = load_rubric(key)
+    return {
+        "key": key,
+        "title": title,
+        "builtin": is_builtin(key),
+        "skills": [
                     {
                         "key": s.key,
                         "name": s.name,
                         "weight": s.weight,
                         "cross_cutting": s.cross_cutting,
-                        "what_good_looks_like": s.what_good_looks_like,
-                    }
-                    for s in skills
-                ],
+                "what_good_looks_like": s.what_good_looks_like,
             }
-        )
-    return out
+            for s in skills
+        ],
+    }
+
+
+@app.get("/roles")
+def roles(_: str = Depends(current_recruiter)) -> list[dict]:
+    return [_role(key) for key in list_rubrics()]
+
+
+@app.post("/roles")
+def create_role(body: RoleBody, _: str = Depends(current_recruiter)) -> dict:
+    """Add a role. Shipped roles stay read-only; this writes alongside them."""
+    key = slugify(body.title)
+    if key in list_rubrics():
+        raise HTTPException(status.HTTP_409_CONFLICT, f"A role called {body.title} already exists.")
+    try:
+        save_rubric(key, body.title, [s.model_dump() for s in body.skills])
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _role(key)
+
+
+@app.put("/roles/{key}")
+def update_role(key: str, body: RoleBody, _: str = Depends(current_recruiter)) -> dict:
+    try:
+        save_rubric(key, body.title, [s.model_dump() for s in body.skills])
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _role(key)
+
+
+@app.delete("/roles/{key}")
+def remove_role(key: str, _: str = Depends(current_recruiter)) -> dict:
+    """Past scorecards survive this: a session stores its own copy of the skills
+    it was interviewed against, so deleting a role cannot rewrite history."""
+    try:
+        delete_rubric(key)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return {"deleted": key}
+
+
+class DraftRequest(BaseModel):
+    jobDescription: str = Field(min_length=40, max_length=8000)
+
+
+@app.post("/roles/draft")
+def draft_role(body: DraftRequest, _: str = Depends(current_recruiter)) -> dict:
+    """Turn a pasted job description into a first draft of a rubric.
+
+    A draft, not a role: nothing is saved until a person has read it. Writing
+    "what a strong answer contains" from scratch for five skills is the tedious
+    part of adding a role, and it is the part a model is good at.
+    """
+    try:
+        return draft_rubric(body.jobDescription)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
 
 @app.get("/evals")

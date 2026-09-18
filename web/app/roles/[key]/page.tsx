@@ -1,8 +1,10 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 
 import { AppShell, Badge, Button, Card, Page, PageHeader, Skeleton } from "@/components/ui";
+import { RoleEditor } from "@/components/RoleEditor";
 import { ApiError, api, type Role } from "@/lib/api";
 
 const ANCHORS = [
@@ -15,8 +17,25 @@ const ANCHORS = [
 
 export default function RolePage({ params }: { params: Promise<{ key: string }> }) {
   const { key } = use(params);
+  const router = useRouter();
   const [role, setRole] = useState<Role | null>(null);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  async function remove() {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setTimeout(() => setConfirmDelete(false), 5000);
+      return;
+    }
+    try {
+      await api.deleteRole(key);
+      router.push("/roles");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't delete this role.");
+    }
+  }
 
   const load = () =>
     api
@@ -38,7 +57,29 @@ export default function RolePage({ params }: { params: Promise<{ key: string }> 
       <PageHeader
         crumbs={[{ href: "/roles", label: "Roles" }, { label: role?.title ?? "…" }]}
         title={role?.title ?? <Skeleton className="h-6 w-56" />}
-        description={role ? `${role.skills.length} skills · scored 1–5 against the anchors below` : undefined}
+        description={
+          role
+            ? editing
+              ? "Changes apply to interviews started from now on. Scorecards already recorded keep the rubric they were scored against."
+              : `${role.skills.length} skills · scored 1–5 against the anchors below`
+            : undefined
+        }
+        actions={
+          role && !editing ? (
+            role.builtin ? (
+              <Badge>Built in · read only</Badge>
+            ) : (
+              <>
+                <Button variant="danger" onClick={remove}>
+                  {confirmDelete ? "Confirm delete" : "Delete"}
+                </Button>
+                <Button variant="primary" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+              </>
+            )
+          ) : null
+        }
       />
       <Page>
         {error && (
@@ -49,7 +90,9 @@ export default function RolePage({ params }: { params: Promise<{ key: string }> 
             </Button>
           </div>
         )}
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+        {role && editing && <RoleEditor existing={role} />}
+
+        <div className={`grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px] ${editing ? "hidden" : ""}`}>
           <div className="space-y-3">
             {!role &&
               !error &&

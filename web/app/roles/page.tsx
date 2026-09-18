@@ -25,7 +25,15 @@ export default function RolesPage() {
 
   return (
     <AppShell>
-      <PageHeader title="Roles" description="Each role is a rubric: the skills an interview covers and what a strong answer contains." />
+      <PageHeader
+        title="Roles"
+        description="Each role is a rubric: the skills an interview covers and what a strong answer contains."
+        actions={
+          <Link href="/roles/new">
+            <Button variant="primary">New role</Button>
+          </Link>
+        }
+      />
       <Page>
         {error && (
           <div role="alert" className="mb-4 flex items-center justify-between rounded-md border border-bad/30 bg-bad-soft px-3 py-2 text-[13px] text-bad-fg">
@@ -58,7 +66,15 @@ export default function RolesPage() {
           </Table>
         )}
         {roles && roles.length === 0 && (
-          <EmptyState title="No roles yet" description="Add a rubric YAML under api/rubrics and it appears here." />
+          <EmptyState
+            title="No roles yet"
+            description="A role is the rubric an interview runs on. Paste a job description and the skills come out drafted."
+            action={
+              <Link href="/roles/new">
+                <Button variant="primary">New role</Button>
+              </Link>
+            }
+          />
         )}
         {roles && roles.length > 0 && (
           <Table>
@@ -75,7 +91,10 @@ export default function RolesPage() {
                     <Link href={`/roles/${r.key}`} className="font-medium text-fg hover:underline">
                       {r.title}
                     </Link>
-                    <div className="font-mono text-[12px] text-fg-3">{r.key}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[12px] text-fg-3">{r.key}</span>
+                      {r.builtin && <span className="text-[12px] text-fg-4">built in</span>}
+                    </div>
                   </Td>
                   <Td>
                     <div className="flex flex-wrap gap-1">
@@ -89,7 +108,10 @@ export default function RolesPage() {
             </tbody>
           </Table>
         )}
-        <p className="mt-4 text-[12px] text-fg-3">Rubrics are edited as files in this version.</p>
+        <p className="mt-4 text-[12px] text-fg-3">
+          Built-in roles are read-only. Roles you add are written as YAML alongside the database, so
+          they survive a restart and can be edited by hand too.
+        </p>
       </Page>
     </AppShell>
   );
