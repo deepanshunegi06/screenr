@@ -76,11 +76,17 @@ def run_personas(names: list[str], json_path: str | None) -> int:
         f"\n{len(runs) - len(failed)}/{len(runs)} personas passed" + (f"; failed: {failed}" if failed else "")
     )
 
-    if json_path:
+    if json_path and not runs:
+        # Every persona errored -- a rate limit, or the provider being down.
+        # Replacing real results with an empty file because nobody could be
+        # reached would destroy the only evidence there is.
+        print(f"\nnothing ran, so {json_path} is unchanged")
+    elif json_path:
         s = get_settings()
         report = build_report(
             runs, model=s.llm_model, provider=s.llm_provider, ran_at=datetime.now(UTC).isoformat()
         )
+        report["errors"] = [{"persona": name, "reason": "did not run"} for name in errored]
         out = Path(json_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")

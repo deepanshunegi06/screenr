@@ -422,3 +422,19 @@ def test_a_role_needs_something_to_ask_about(auth):
     )
     assert res.status_code == 400
     assert "askable" in res.json()["detail"]
+
+
+def test_the_cli_does_not_wipe_a_report_when_nothing_ran(tmp_path, monkeypatch, capsys):
+    """Same guarantee as the dashboard button, on the other caller."""
+    from app import cli
+    from evals import runner
+
+    report = tmp_path / "latest.json"
+    report.write_text('{"summary": {"total": 4, "passed": 2}}', encoding="utf-8")
+
+    monkeypatch.setattr(
+        runner, "run_interview", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("429"))
+    )
+    assert cli.run_personas(["all"], str(report)) == 1
+    assert "unchanged" in capsys.readouterr().out
+    assert json.loads(report.read_text())["summary"]["passed"] == 2

@@ -45,6 +45,11 @@ def build_llm(temperature: float = 0.3) -> BaseChatModel:
             model=s.llm_model,
             temperature=temperature,
             google_api_key=s.google_api_key,
+            # The free tier allows five requests a minute on the flash models,
+            # measured against the API rather than taken from the docs. An eval
+            # sweep will hit that wall repeatedly, so waiting has to be cheaper
+            # than failing a turn.
+            max_retries=8,
         )
 
     if provider == "anthropic":
