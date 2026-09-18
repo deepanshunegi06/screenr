@@ -7,13 +7,8 @@ import { Badge, Button, Logo, Textarea } from "@/components/ui";
 import { Wrapping } from "@/components/Wrapping";
 import { AgentVoice, startMicrophone, type MicHandle } from "@/lib/audio";
 import { exitFullscreen, watchIntegrity, type IntegrityWatch } from "@/lib/integrity";
-import {
-  watchCamera,
-  type GazeCalibration,
-  type GazeTracker,
-  type ProctorHandle,
-  type ProctorStatus,
-} from "@/lib/proctor";
+import type { GazeSetup } from "@/components/GazeCalibration";
+import { watchCamera, type GazeTracker, type ProctorHandle, type ProctorStatus } from "@/lib/proctor";
 import { api, mmss, wsUrl } from "@/lib/api";
 
 type Line = { speaker: "agent" | "you"; text: string; tools?: string[] };
@@ -46,7 +41,7 @@ export function InterviewRoom({
   maxMinutes,
   voice,
   tracker,
-  calibration,
+  gaze,
   onFinished,
 }: {
   token: string;
@@ -57,7 +52,7 @@ export function InterviewRoom({
   /** Camera and model, already running from the calibration step. Null when the
    *  candidate declined or calibration could not be trusted. */
   tracker: GazeTracker | null;
-  calibration: GazeCalibration | null;
+  gaze: GazeSetup | null;
   onFinished: () => void;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
@@ -306,7 +301,7 @@ export function InterviewRoom({
       if (tracker && !cancelled) {
         proctor.current = watchCamera(
           tracker,
-          calibration,
+          gaze,
           (event) => handleSignal(event.kind, event.detail, event.kind === "looking_away"),
           setProctorStatus,
         );
@@ -331,7 +326,7 @@ export function InterviewRoom({
       }
       socket.current = null;
     };
-  }, [token, voice, attempt, tracker, calibration, startMic, stopMic, stopProctor, handleSignal]);
+  }, [token, voice, attempt, tracker, gaze, startMic, stopMic, stopProctor, handleSignal]);
 
   const sendTyped = useCallback(() => {
     const answer = draft.trim();

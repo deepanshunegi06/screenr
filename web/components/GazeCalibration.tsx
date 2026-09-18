@@ -4,35 +4,46 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui";
 import {
-  averageSample,
-  calibrationIsUsable,
-  type GazeCalibration as Calibration,
-  type GazeSample,
-  type GazeTarget,
-  type GazeTracker,
-} from "@/lib/proctor";
+  averageFeatures,
+  fitGazeModel,
+  judge,
+  Smoother,
+  type GazeFeatures,
+  type GazeModel,
+  type ScreenPoint,
+} from "@/lib/gaze";
+import type { GazeTracker } from "@/lib/proctor";
 
 /**
- * Look at four dots. That is the whole calibration.
+ * Look at five dots, then prove it works.
  *
- * Without it, iris position says almost nothing: head rotation swamps it and
- * everyone's eyes sit differently relative to their camera. With it, the checks
- * have a reference for where this person's eyes actually are when they look at
- * the screen versus off it — which is what makes eye movement detectable while
- * the head stays still.
- *
- * "down" is its own target because that is where a phone is.
+ * The calibration itself is the standard approach: known screen points, record
+ * features at each, fit a regression. The second half matters just as much —
+ * the candidate is asked to deliberately look away, and if the model does not
+ * notice, camera checks are turned off and they are told so. An earlier version
+ * failed this step silently and ran the whole interview detecting nothing,
+ * which is the worst of both worlds: no protection, and false confidence.
  */
 
-const STEPS: { target: GazeTarget; label: string; style: React.CSSProperties }[] = [
-  { target: "center", label: "Look at the centre", style: { top: "50%", left: "50%" } },
-  { target: "left", label: "Now the left edge", style: { top: "50%", left: "4%" } },
-  { target: "right", label: "Now the right edge", style: { top: "50%", left: "96%" } },
-  { target: "down", label: "Now down, as if at your lap", style: { top: "94%", left: "50%" } },
+export type GazeSetup = { model: GazeModel; neutral: GazeFeatures };
+
+const POINTS: { at: ScreenPoint; label: string }[] = [
+  { at: { sx: 0.5, sy: 0.5 }, label: "Look at the centre dot" },
+  { at: { sx: 0.04, sy: 0.5 }, label: "Now the left edge" },
+  { at: { sx: 0.96, sy: 0.5 }, label: "Now the right edge" },
+  { at: { sx: 0.5, sy: 0.05 }, label: "Now the top" },
+  { at: { sx: 0.5, sy: 0.95 }, label: "Now the bottom" },
 ];
 
-const SETTLE_MS = 900;
-const CAPTURE_MS = 1100;
+const SETTLE_MS = 800;
+const CAPTURE_MS = 1000;
+const MIN_FRAMES = 5;
+
+/** The check must fire within this long while they are looking away, or the
+ *  model is not good enough to act on. */
+const VERIFY_SECONDS = 6;
+
+type Phase = "points" | "verify" | "failed";
 
 export function GazeCalibration({
   tracker,
@@ -40,14 +51,17 @@ export function GazeCalibration({
   onSkip,
 }: {
   tracker: GazeTracker;
-  onDone: (calibration: Calibration | null) => void;
+  onDone: (setup: GazeSetup | null) => void;
   onSkip: () => void;
 }) {
+  const [phase, setPhase] = useState<Phase>("points");
   const [step, setStep] = useState(0);
   const [capturing, setCapturing] = useState(false);
-  const [problem, setProblem] = useState("");
+  const [message, setMessage] = useState("");
+  const [verifySeconds, setVerifySeconds] = useState(VERIFY_SECONDS);
   const view = useRef<HTMLVideoElement>(null);
-  const results = useRef<Partial<Record<GazeTarget, GazeSample>>>({});
+  const collected = useRef<{ features: GazeFeatures; target: ScreenPoint }[]>([]);
+  const setup = useRef<GazeSetup | null>(null);
 
   useEffect(() => {
     const el = view.current;
@@ -56,67 +70,119 @@ export function GazeCalibration({
     void el.play().catch(() => {});
   }, [tracker.stream]);
 
-  const capture = useCallback(
-    async (target: GazeTarget) => {
-      const samples: GazeSample[] = [];
+  const captureAt = useCallback(
+    async (target: ScreenPoint) => {
+      const samples: GazeFeatures[] = [];
       const deadline = Date.now() + CAPTURE_MS;
       while (Date.now() < deadline) {
-        const { gaze } = tracker.sample();
-        if (gaze) samples.push(gaze);
-        await new Promise((r) => setTimeout(r, 80));
+        const { features } = tracker.read();
+        if (features) samples.push(features);
+        await new Promise((r) => setTimeout(r, 70));
       }
-      // Six good frames out of roughly fourteen. Below that the camera is not
-      // seeing them well enough for the reference to mean anything.
-      if (samples.length < 6) return false;
-      results.current[target] = averageSample(samples);
+      if (samples.length < MIN_FRAMES) return false;
+      collected.current.push({ features: averageFeatures(samples), target });
       return true;
     },
     [tracker],
   );
 
+  // Walk the five points.
   useEffect(() => {
+    if (phase !== "points") return;
     let cancelled = false;
+
     const run = async () => {
       await new Promise((r) => setTimeout(r, SETTLE_MS));
       if (cancelled) return;
       setCapturing(true);
-      const ok = await capture(STEPS[step].target);
+      const ok = await captureAt(POINTS[step].at);
       if (cancelled) return;
       setCapturing(false);
 
       if (!ok) {
-        setProblem("The camera can't see you clearly enough. Check the lighting and try again.");
+        setMessage("The camera can't see your face clearly enough. Check the lighting.");
+        setPhase("failed");
         return;
       }
-      if (step < STEPS.length - 1) {
+      if (step < POINTS.length - 1) {
         setStep((s) => s + 1);
         return;
       }
 
-      const calibration = results.current as Calibration;
-      // A calibration where looking away barely differs from looking at the
-      // screen is not usable. Running unproctored beats acting on noise.
-      onDone(calibrationIsUsable(calibration) ? calibration : null);
+      const model = fitGazeModel(collected.current);
+      if (!model || model.quality > 0.45) {
+        setMessage(
+          model
+            ? "The readings were too inconsistent to track your eyes reliably."
+            : "Couldn't build a gaze model from those readings.",
+        );
+        setPhase("failed");
+        return;
+      }
+      setup.current = { model, neutral: collected.current[0].features };
+      setPhase("verify");
     };
+
     void run();
     return () => {
       cancelled = true;
     };
-  }, [step, capture, onDone]);
+  }, [phase, step, captureAt]);
+
+  // Prove it. They look away; the model has to notice.
+  useEffect(() => {
+    if (phase !== "verify" || !setup.current) return;
+    let cancelled = false;
+    const smoother = new Smoother();
+    const started = Date.now();
+
+    const timer = setInterval(() => {
+      if (cancelled) return;
+      const left = VERIFY_SECONDS - Math.floor((Date.now() - started) / 1000);
+      setVerifySeconds(Math.max(0, left));
+
+      const { features } = tracker.read();
+      if (features && setup.current) {
+        const verdict = judge(setup.current.model, smoother.push(features), setup.current.neutral);
+        if (verdict.off) {
+          clearInterval(timer);
+          onDone(setup.current);
+          return;
+        }
+      }
+      if (left <= 0) {
+        clearInterval(timer);
+        setMessage(
+          "The checks couldn't tell you were looking away. Camera checks will stay off for this interview.",
+        );
+        setPhase("failed");
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [phase, tracker, onDone]);
 
   const retry = () => {
-    results.current = {};
-    setProblem("");
+    collected.current = [];
+    setup.current = null;
+    setMessage("");
     setStep(0);
+    setVerifySeconds(VERIFY_SECONDS);
+    setPhase("points");
   };
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-fg">
-      <div className="flex items-center justify-between px-5 py-4">
+      <div className="flex items-start justify-between gap-4 px-5 py-4">
         <div>
           <p className="text-[15px] font-semibold text-white">Setting up the camera checks</p>
           <p className="mt-0.5 text-[13px] text-white/60">
-            Keep your head still and move only your eyes. Four quick points.
+            {phase === "verify"
+              ? "One last check that it works."
+              : "Keep your head still and move only your eyes."}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -133,45 +199,71 @@ export function GazeCalibration({
       </div>
 
       <div className="relative flex-1">
-        {STEPS.map((s, i) => (
-          <div
-            key={s.target}
-            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 transition-opacity duration-300"
-            style={{ ...s.style, opacity: i === step ? 1 : 0 }}
-          >
-            <span className="relative grid h-6 w-6 place-items-center">
-              <span
-                aria-hidden
-                className={`absolute inset-0 rounded-full bg-accent/40 ${
-                  i === step && !capturing ? "animate-ping" : ""
-                }`}
-              />
-              <span
-                aria-hidden
-                className={`relative h-3 w-3 rounded-full transition-colors ${
-                  capturing && i === step ? "bg-ok" : "bg-accent"
-                }`}
-              />
-            </span>
-          </div>
-        ))}
-
-        <div className="absolute inset-x-0 top-1/2 flex -translate-y-24 flex-col items-center px-6 text-center">
-          <p className="text-[18px] font-medium text-white" role="status">
-            {problem || STEPS[step].label}
-          </p>
-          <p className="mt-1 text-[13px] text-white/50">
-            {problem ? "" : capturing ? "Hold it…" : `${step + 1} of ${STEPS.length}`}
-          </p>
-          {problem && (
-            <div className="mt-4 flex gap-2">
-              <Button variant="primary" onClick={retry}>
-                Try again
-              </Button>
-              <Button variant="ghost" className="text-white/70 hover:bg-white/10" onClick={onSkip}>
-                Continue without camera checks
-              </Button>
+        {phase === "points" &&
+          POINTS.map((p, i) => (
+            <div
+              key={i}
+              className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 transition-opacity duration-300"
+              style={{ left: `${p.at.sx * 100}%`, top: `${p.at.sy * 100}%`, opacity: i === step ? 1 : 0 }}
+            >
+              <span className="relative grid h-7 w-7 place-items-center">
+                <span
+                  aria-hidden
+                  className={`absolute inset-0 rounded-full bg-accent/40 ${
+                    i === step && !capturing ? "animate-ping" : ""
+                  }`}
+                />
+                <span
+                  aria-hidden
+                  className={`relative h-3.5 w-3.5 rounded-full transition-colors ${
+                    capturing && i === step ? "bg-ok" : "bg-accent"
+                  }`}
+                />
+              </span>
             </div>
+          ))}
+
+        <div className="absolute inset-x-0 top-1/2 flex -translate-y-28 flex-col items-center px-6 text-center">
+          {phase === "points" && (
+            <>
+              <p className="text-[19px] font-medium text-white" role="status">
+                {POINTS[step].label}
+              </p>
+              <p className="mt-1 text-[13px] text-white/50">
+                {capturing ? "Hold it…" : `${step + 1} of ${POINTS.length}`}
+              </p>
+            </>
+          )}
+
+          {phase === "verify" && (
+            <>
+              <p className="text-[19px] font-medium text-white" role="status">
+                Now look away from the screen
+              </p>
+              <p className="mt-1 max-w-sm text-[13px] text-white/50">
+                Down at your lap, or off to one side. Checking that the tracker notices — {verifySeconds}s
+              </p>
+            </>
+          )}
+
+          {phase === "failed" && (
+            <>
+              <p className="max-w-md text-[17px] font-medium text-white" role="alert">
+                {message}
+              </p>
+              <div className="mt-5 flex gap-2">
+                <Button variant="primary" onClick={retry}>
+                  Try again
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="text-white/70 hover:bg-white/10"
+                  onClick={() => onDone(null)}
+                >
+                  Continue without camera checks
+                </Button>
+              </div>
+            </>
           )}
         </div>
       </div>

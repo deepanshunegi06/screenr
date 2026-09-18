@@ -2,12 +2,12 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 
-import { GazeCalibration } from "@/components/GazeCalibration";
+import { GazeCalibration, type GazeSetup } from "@/components/GazeCalibration";
 import { InterviewRoom } from "@/components/InterviewRoom";
 import { Button, Card, Logo, Skeleton } from "@/components/ui";
 import { AgentVoice } from "@/lib/audio";
 import { enterFullscreen } from "@/lib/integrity";
-import { createTracker, type GazeCalibration as Calibration, type GazeTracker } from "@/lib/proctor";
+import { createTracker, type GazeTracker } from "@/lib/proctor";
 import { api, type InterviewIntro } from "@/lib/api";
 
 type Stage = "loading" | "invalid" | "consent" | "calibrating" | "live" | "done";
@@ -19,7 +19,7 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
   // One AgentVoice for the page, unlocked inside the Start click.
   const [voice] = useState(() => new AgentVoice());
   const [tracker, setTracker] = useState<GazeTracker | null>(null);
-  const [calibration, setCalibration] = useState<Calibration | null>(null);
+  const [gaze, setGaze] = useState<GazeSetup | null>(null);
 
   useEffect(() => {
     api
@@ -103,7 +103,7 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
       <GazeCalibration
         tracker={tracker}
         onDone={(result) => {
-          setCalibration(result);
+          setGaze(result);
           setStage("live");
         }}
         onSkip={() => {
@@ -122,7 +122,7 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
       maxMinutes={intro.maxMinutes}
       voice={voice}
       tracker={tracker}
-      calibration={calibration}
+      gaze={gaze}
       onFinished={() => setStage("done")}
     />
   );

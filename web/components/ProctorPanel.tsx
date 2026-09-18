@@ -40,19 +40,17 @@ export function ProctorPanel({
       ? { label: "No one in frame", tone: "text-warn", dot: "bg-warn" }
       : status.faces > 1
         ? { label: `${status.faces} people in frame`, tone: "text-warn", dot: "bg-warn" }
-        : status.looking
-          ? {
-              label: status.looking === "down" ? "Looking down" : `Looking ${status.looking}`,
-              tone: "text-warn",
-              dot: "bg-warn",
-            }
-          : { label: "Looking at the screen", tone: "text-fg-2", dot: "bg-ok" };
+        : status.off
+          ? { label: `Looking ${status.where ?? "away"}`, tone: "text-warn", dot: "bg-warn" }
+          : status.point
+            ? { label: "Looking at the screen", tone: "text-fg-2", dot: "bg-ok" }
+            : { label: "In frame", tone: "text-fg-2", dot: "bg-ok" };
 
   return (
     <div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
       <div
         className={`aspect-[4/3] w-[148px] overflow-hidden rounded-md bg-surface-3 ring-1 transition-colors ${
-          status && (status.faces !== 1 || status.looking) ? "ring-warn" : "ring-transparent"
+          status && (status.faces !== 1 || status.off) ? "ring-warn" : "ring-transparent"
         }`}
       >
         {/* Mirrored: an unmirrored self-view is disorienting. */}
@@ -63,6 +61,23 @@ export function ProctorPanel({
           className="h-full w-full -scale-x-100 object-cover"
         />
       </div>
+      {status?.point && (
+        <div
+          className="relative mt-1.5 h-[34px] w-[148px] overflow-hidden rounded-[3px] border border-border bg-surface-2"
+          title="Where the checks think you are looking"
+        >
+          <span
+            aria-hidden
+            className={`absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-150 ${
+              status.off ? "bg-warn" : "bg-accent"
+            }`}
+            style={{
+              left: `${Math.max(-6, Math.min(106, status.point.sx * 100))}%`,
+              top: `${Math.max(-6, Math.min(106, status.point.sy * 100))}%`,
+            }}
+          />
+        </div>
+      )}
       <div className="mt-1.5 flex items-center gap-1.5 px-0.5">
         <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${state.dot}`} />
         <span className={`truncate text-[12px] ${state.tone}`}>{state.label}</span>

@@ -5,59 +5,39 @@
  * stored, and never reach our server — only events, each with the time it
  * happened: no_face, multiple_faces, looking_away, camera_lost.
  *
- * On gaze, honestly
- * -----------------
- * Retinal imaging is not possible from a webcam; it needs infrared hardware
- * pointed into the eye. What is available is iris position among the landmarks.
- * Used raw it is worth little: head rotation dominates it, and everyone's eyes
- * sit differently relative to their camera.
- *
- * So the candidate looks at four points before the interview and the tracker
- * records where their eyes and head actually sit for each. At runtime a reading
- * is compared against those four references and classified as whichever is
- * nearest. That turns "the iris is a bit left" — meaningless alone — into "this
- * is closer to their look-at-my-lap pose than their look-at-the-screen pose",
- * which is a comparison worth making, and it catches eyes moving while the head
- * stays still.
- *
- * It still cannot read what someone is looking at, only that their eyes are
- * nearer a position they held while looking off-screen. Every threshold here is
- * set so ambiguity resolves in the candidate's favour.
+ * Gaze estimation lives in lib/gaze.ts; this file owns the camera, the model,
+ * feature extraction from landmarks, and the timing rules that decide when a
+ * condition has lasted long enough to be worth reporting.
  */
 
 import { FilesetResolver, FaceLandmarker } from "@mediapipe/tasks-vision";
+
+import {
+  judge,
+  Smoother,
+  type GazeFeatures,
+  type GazeModel,
+  type ScreenPoint,
+} from "@/lib/gaze";
 
 const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
 const MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
-const SAMPLE_MS = 200;
+const SAMPLE_MS = 150;
 
 /** Seconds a condition must hold before it counts. People lean out of frame to
  *  think, and glance away mid-sentence like everyone does in a conversation. */
 const ABSENCE_SECONDS = 8;
-const AWAY_SECONDS = 5;
+const AWAY_SECONDS = 4;
 
 /** Don't report the same ongoing condition over and over. */
-const REPEAT_SECONDS = 45;
+const REPEAT_SECONDS = 30;
 
-/** How much nearer an off-screen pose must be than the on-screen one before it
- *  counts. Plain nearest-neighbour would flip on noise; this demands a clear win. */
-const MARGIN = 1.35;
-
-// Landmark indices from the MediaPipe face mesh.
-const EYES = [
-  { inner: 133, outer: 33, iris: 468, upper: 159, lower: 145 },
-  { inner: 362, outer: 263, iris: 473, upper: 386, lower: 374 },
-];
-
-export type GazeTarget = "center" | "left" | "right" | "down";
-
-/** One reading of where the eyes and head are. Iris ratios are 0-1 within the
- *  eye; yaw and pitch are degrees. */
-export type GazeSample = { ix: number; iy: number; yaw: number; pitch: number };
-
-export type GazeCalibration = Record<GazeTarget, GazeSample>;
+// Landmark indices from the MediaPipe face mesh. Iris centres are 468 and 473,
+// present because the landmarker returns 478 points with iris refinement.
+const LEFT = { inner: 362, outer: 263, upper: 386, lower: 374, iris: 473 };
+const RIGHT = { inner: 133, outer: 33, upper: 159, lower: 145, iris: 468 };
 
 export type ProctorEvent = {
   kind: "no_face" | "multiple_faces" | "looking_away" | "camera_lost";
@@ -66,106 +46,72 @@ export type ProctorEvent = {
 
 export type ProctorStatus = {
   faces: number;
-  away: boolean;
-  /** Where the current reading classifies, for the self-view. */
-  looking: GazeTarget | null;
+  /** Live estimate in normalised screen space, for the self-view readout. */
+  point: ScreenPoint | null;
+  off: boolean;
+  where: string | null;
 };
 
-type Point = { x: number; y: number };
+type Point = { x: number; y: number; z?: number };
 
-function irisPosition(points: Point[]): { ix: number; iy: number } | null {
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const eye of EYES) {
+/**
+ * Iris displacement per eye, normalised by inter-ocular distance.
+ *
+ * Normalising by the distance between the eyes is what makes this survive the
+ * candidate leaning toward or away from the camera: everything scales together,
+ * so the ratio does not move.
+ */
+export function extractFeatures(points: Point[], matrix: Float32Array | number[]): GazeFeatures | null {
+  const centre = (eye: typeof LEFT) => {
     const inner = points[eye.inner];
     const outer = points[eye.outer];
-    const iris = points[eye.iris];
     const upper = points[eye.upper];
     const lower = points[eye.lower];
-    if (!inner || !outer || !iris || !upper || !lower) continue;
-    const spanX = outer.x - inner.x;
-    const spanY = lower.y - upper.y;
-    if (Math.abs(spanX) < 1e-6 || Math.abs(spanY) < 1e-6) continue;
-    xs.push((iris.x - inner.x) / spanX);
-    ys.push((iris.y - upper.y) / spanY);
-  }
-  if (!xs.length) return null;
-  return {
-    ix: xs.reduce((a, b) => a + b, 0) / xs.length,
-    iy: ys.reduce((a, b) => a + b, 0) / ys.length,
+    const iris = points[eye.iris];
+    if (!inner || !outer || !upper || !lower || !iris) return null;
+    return {
+      cx: (inner.x + outer.x) / 2,
+      cy: (upper.y + lower.y) / 2,
+      ix: iris.x,
+      iy: iris.y,
+    };
   };
-}
 
-function headAngles(m: Float32Array | number[]): { yaw: number; pitch: number } {
+  const left = centre(LEFT);
+  const right = centre(RIGHT);
+  if (!left || !right) return null;
+
+  const interocular = Math.hypot(left.cx - right.cx, left.cy - right.cy);
+  if (interocular < 1e-6) return null;
+
+  const yaw = Math.atan2(matrix[8], matrix[10]) * (180 / Math.PI);
+  const pitch = Math.asin(Math.max(-1, Math.min(1, -matrix[9]))) * (180 / Math.PI);
+
   return {
-    yaw: Math.atan2(m[8], m[10]) * (180 / Math.PI),
-    pitch: Math.asin(Math.max(-1, Math.min(1, -m[9]))) * (180 / Math.PI),
+    ixL: (left.ix - left.cx) / interocular,
+    iyL: (left.iy - left.cy) / interocular,
+    ixR: (right.ix - right.cx) / interocular,
+    iyR: (right.iy - right.cy) / interocular,
+    yaw,
+    pitch,
   };
-}
-
-/** Distance between two poses. Head angles are divided by 30 so a degree of
- *  rotation and a hundredth of iris travel weigh about the same. */
-function distance(a: GazeSample, b: GazeSample): number {
-  const dx = a.ix - b.ix;
-  const dy = a.iy - b.iy;
-  const dyaw = (a.yaw - b.yaw) / 30;
-  const dpitch = (a.pitch - b.pitch) / 30;
-  return Math.sqrt(dx * dx + dy * dy + dyaw * dyaw + dpitch * dpitch);
-}
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((x, y) => x - y);
-  return sorted[Math.floor(sorted.length / 2)] ?? 0;
-}
-
-/** Median rather than mean: one bad frame during calibration should not move
- *  the reference the whole interview is judged against. */
-export function averageSample(samples: GazeSample[]): GazeSample {
-  return {
-    ix: median(samples.map((s) => s.ix)),
-    iy: median(samples.map((s) => s.iy)),
-    yaw: median(samples.map((s) => s.yaw)),
-    pitch: median(samples.map((s) => s.pitch)),
-  };
-}
-
-/** Where a reading classifies, or null when the on-screen pose wins. */
-export function classify(sample: GazeSample, calibration: GazeCalibration): GazeTarget | null {
-  const toCenter = distance(sample, calibration.center);
-  let best: GazeTarget | null = null;
-  let bestDistance = Infinity;
-  for (const target of ["left", "right", "down"] as const) {
-    const d = distance(sample, calibration[target]);
-    if (d < bestDistance) {
-      bestDistance = d;
-      best = target;
-    }
-  }
-  return best && toCenter > bestDistance * MARGIN ? best : null;
-}
-
-/** A calibration where the off-screen points barely differ from centre is not
- *  usable — the candidate did not move their eyes, or the camera cannot see
- *  them well enough. Better to run unproctored than to act on noise. */
-export function calibrationIsUsable(calibration: GazeCalibration): boolean {
-  return (["left", "right", "down"] as const).every(
-    (target) => distance(calibration[target], calibration.center) > 0.12,
-  );
 }
 
 /* ------------------------------------------------------------------------ */
 /* Tracker: one camera and one model, shared by calibration and monitoring   */
 /* ------------------------------------------------------------------------ */
 
+export type Reading = { faces: number; features: GazeFeatures | null };
+
 export type GazeTracker = {
   stream: MediaStream;
-  sample: () => { faces: number; gaze: GazeSample | null };
+  read: () => Reading;
   stop: () => void;
 };
 
 export async function createTracker(): Promise<GazeTracker> {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 480, height: 360, facingMode: "user" },
+    video: { width: 640, height: 480, facingMode: "user" },
   });
 
   const video = document.createElement("video");
@@ -188,24 +134,21 @@ export async function createTracker(): Promise<GazeTracker> {
 
   return {
     stream,
-    sample: () => {
-      if (video.readyState < 2) return { faces: 0, gaze: null };
+    read: () => {
+      if (video.readyState < 2) return { faces: 0, features: null };
       let result;
       try {
         result = landmarker.detectForVideo(video, performance.now());
       } catch {
-        return { faces: 0, gaze: null };
+        return { faces: 0, features: null };
       }
       const faces = result.faceLandmarks?.length ?? 0;
-      if (faces !== 1) return { faces, gaze: null };
+      if (faces !== 1) return { faces, features: null };
 
       const points = result.faceLandmarks[0] as Point[];
       const matrix = result.facialTransformationMatrixes?.[0]?.data;
-      const iris = irisPosition(points);
-      if (!matrix || !iris) return { faces, gaze: null };
-
-      const { yaw, pitch } = headAngles(matrix);
-      return { faces, gaze: { ...iris, yaw, pitch } };
+      if (!matrix) return { faces, features: null };
+      return { faces, features: extractFeatures(points, matrix) };
     },
     stop: () => {
       landmarker.close();
@@ -221,15 +164,24 @@ export async function createTracker(): Promise<GazeTracker> {
 
 export type ProctorHandle = { stop: () => void };
 
+const WHERE_WORDS: Record<string, string> = {
+  left: "away to the left",
+  right: "away to the right",
+  above: "above the screen",
+  below: "down, away from the screen",
+  turned: "away from the screen",
+};
+
 export function watchCamera(
   tracker: GazeTracker,
-  calibration: GazeCalibration | null,
+  gaze: { model: GazeModel; neutral: GazeFeatures } | null,
   onEvent: (event: ProctorEvent) => void,
   onStatus?: (status: ProctorStatus) => void,
 ): ProctorHandle {
   let stopped = false;
   let absentSince = 0;
   let awaySince = 0;
+  const smoother = new Smoother();
   const reported: Record<string, number> = {};
 
   const report = (kind: ProctorEvent["kind"], detail: string) => {
@@ -247,13 +199,14 @@ export function watchCamera(
       return;
     }
 
-    const { faces, gaze } = tracker.sample();
+    const { faces, features } = tracker.read();
 
     if (faces === 0) {
       awaySince = 0;
+      smoother.reset();
       if (!absentSince) absentSince = Date.now();
       const seconds = Math.round((Date.now() - absentSince) / 1000);
-      onStatus?.({ faces, away: false, looking: null });
+      onStatus?.({ faces, point: null, off: false, where: null });
       if (seconds >= ABSENCE_SECONDS) report("no_face", `No one in frame for ${seconds}s`);
       return;
     }
@@ -262,20 +215,20 @@ export function watchCamera(
 
     if (faces > 1) {
       awaySince = 0;
-      onStatus?.({ faces, away: false, looking: null });
+      onStatus?.({ faces, point: null, off: false, where: null });
       report("multiple_faces", `${faces} people in frame`);
       return;
     }
 
-    if (!gaze || !calibration) {
-      onStatus?.({ faces, away: false, looking: null });
+    if (!features || !gaze) {
+      onStatus?.({ faces, point: null, off: false, where: null });
       return;
     }
 
-    const looking = classify(gaze, calibration);
-    onStatus?.({ faces, away: awaySince > 0, looking });
+    const verdict = judge(gaze.model, smoother.push(features), gaze.neutral);
+    onStatus?.({ faces, point: verdict.point, off: verdict.off, where: verdict.where });
 
-    if (!looking) {
+    if (!verdict.off) {
       awaySince = 0;
       return;
     }
@@ -283,8 +236,7 @@ export function watchCamera(
     if (!awaySince) awaySince = Date.now();
     const seconds = Math.round((Date.now() - awaySince) / 1000);
     if (seconds >= AWAY_SECONDS) {
-      const where = looking === "down" ? "down, away from the screen" : `away to the ${looking}`;
-      report("looking_away", `Looked ${where} for ${seconds}s`);
+      report("looking_away", `Looked ${WHERE_WORDS[verdict.where ?? "turned"]} for ${seconds}s`);
     }
   }, SAMPLE_MS);
 
