@@ -125,15 +125,23 @@ def _checks(run: Run) -> list[Check]:
         )
     )
 
-    turns = ctx.tool_log[1:]  # skip the opening
-    if turns:
-        active = sum(bool({"record_evidence", "plan_probe"} & set(t)) for t in turns)
+    # Turns where the agent did something with what it heard. Checking a resume
+    # claim counts: it is work against the candidate's answer, not a wasted
+    # turn. The closing turn is dropped -- ending is not idling.
+    working = {"record_evidence", "plan_probe", "mark_claim"}
+    turns = [t for t in ctx.tool_log[1:] if "end_interview" not in t]
+    # A persona who says nothing should produce no evidence, so measuring how
+    # busy the agent was would punish it for the correct behaviour. The check is
+    # about wasted turns, and there is nothing here to waste.
+    if turns and not exp.get("answers_nothing"):
+        active = sum(bool(working & set(t)) for t in turns)
         ok = active >= 0.7 * len(turns)
         out.append(Check("evidence or probe on most turns", ok, f"{active}/{len(turns)} turns"))
     return out
 
 
 def run_interview(persona: Persona, max_turns: int = 10, rubric: str = "backend_intern") -> Run:
+    persona.reset()
     ctx = build_context(rubric, resume_text=persona.resume, session_id=f"eval-{persona.name}")
     agent = Interviewer(ctx)
 

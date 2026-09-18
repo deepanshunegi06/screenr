@@ -6,6 +6,8 @@
     python -m app.cli --json evals/results/latest.json
                                                    run every persona, write the report the
                                                    evals page renders
+    python -m app.cli --persona silent --voice     same, but through the real Deepgram
+                                                   agent -- costs agent-hours
 
 This is how development happens. Audio costs credit and takes twenty minutes a
 run; text costs almost nothing and takes seconds, so the agent's behaviour gets
@@ -51,7 +53,9 @@ def _print_card(card: dict) -> None:
     print()
 
 
-def run_personas(names: list[str], json_path: str | None) -> int:
+def run_personas(names: list[str], json_path: str | None, voice: bool = False) -> int:
+    import asyncio
+
     from evals import personas as p
     from evals.runner import build_report, run_interview
 
@@ -60,14 +64,30 @@ def run_personas(names: list[str], json_path: str | None) -> int:
 
     runs = []
     errored: list[str] = []
-    for persona in chosen:
-        try:
-            run = run_interview(persona, max_turns=14)
-        except Exception as exc:  # a provider outage on one persona must not lose the others
-            print(f"=== {persona.name} === ERROR {type(exc).__name__}: {str(exc)[:200]}")
-            errored.append(persona.name)
-            continue
-        runs.append(run)
+
+    if voice:
+        # The real socket, the real model, answered in text. All personas at
+        # once: the sweep takes as long as its slowest interview, not the sum.
+        from evals.voice_runner import clear_stray_sessions, run_all
+
+        if stray := clear_stray_sessions():
+            print(f"cleared {stray} eval session(s) left by an interrupted run")
+        results = asyncio.run(run_all(chosen, max_turns=16))
+        for persona, result in zip(chosen, results, strict=True):
+            if isinstance(result, BaseException):
+                print(f"=== {persona.name} === ERROR {type(result).__name__}: {str(result)[:200]}")
+                errored.append(persona.name)
+                continue
+            runs.append(result)
+    else:
+        for persona in chosen:
+            try:
+                runs.append(run_interview(persona, max_turns=14))
+            except Exception as exc:  # one provider outage must not lose the rest
+                print(f"=== {persona.name} === ERROR {type(exc).__name__}: {str(exc)[:200]}")
+                errored.append(persona.name)
+
+    for run in runs:
         print(run.pretty())
         _print_card(run.scorecard)
 
@@ -84,7 +104,10 @@ def run_personas(names: list[str], json_path: str | None) -> int:
     elif json_path:
         s = get_settings()
         report = build_report(
-            runs, model=s.llm_model, provider=s.llm_provider, ran_at=datetime.now(UTC).isoformat()
+            runs,
+            model=s.voice_think_model if voice else s.llm_model,
+            provider=f"deepgram / {s.voice_think_provider}" if voice else s.llm_provider,
+            ran_at=datetime.now(UTC).isoformat(),
         )
         report["errors"] = [{"persona": name, "reason": "did not run"} for name in errored]
         out = Path(json_path)
@@ -126,11 +149,16 @@ def main() -> int:
     parser.add_argument("--json", help="write an eval report here (implies --persona all)")
     parser.add_argument("--rubric", default="backend_intern")
     parser.add_argument("--resume", help="path to a resume text file")
+    parser.add_argument(
+        "--voice",
+        action="store_true",
+        help="run the personas through the real Deepgram agent instead of the typed path",
+    )
     args = parser.parse_args()
 
     if args.json or args.persona:
         names = [n.strip() for n in (args.persona or "all").split(",")]
-        return run_personas(names, args.json)
+        return run_personas(names, args.json, voice=args.voice)
     return run_live(args.rubric, args.resume)
 
 
