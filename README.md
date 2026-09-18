@@ -101,7 +101,7 @@ cp env.example .env         # then fill in the keys below
 |---|---|
 | `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID` | voice interviews and per-interview cost |
 | `VOICE_THINK_PROVIDER`, `VOICE_THINK_MODEL` | the model Deepgram runs (`anthropic` / `claude-sonnet-5`) |
-| `GROQ_API_KEY` | the typed path, the CLI and the evals |
+| `GROQ_API_KEY` *or* `GOOGLE_API_KEY` | the CLI and the evals. Both are free; Gemini's daily quota is the larger one, so `LLM_PROVIDER=gemini` with `LLM_MODEL=gemini-2.5-flash` is the path of least resistance |
 | `RECRUITER_EMAIL`, `RECRUITER_PASSWORD`, `JWT_SECRET` | the single recruiter account |
 | `DEMO_MODE=true` | a one-click demo sign-in that never exposes the password |
 | `CORS_ORIGINS` | the frontend origin(s) |
