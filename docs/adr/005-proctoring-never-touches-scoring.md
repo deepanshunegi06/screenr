@@ -21,21 +21,18 @@ should look.
 
 ## Decision
 
-Detection comes from `@timadey/proctor`, which runs on-device in the browser. We
-consume its discrete events and discard its aggregate suspicion score. Gaze
-estimation is disabled.
+The only integrity signal collected is a tab or window switch of three seconds or
+more, reported by the candidate's browser. Camera-based checks were scoped out;
+the reasoning below is why they would be kept at arm's length if ever added.
 
 Enforced boundaries:
 
 1. Integrity events are stored on `Session.integrity`, never on the
    `InterviewContext` that `scoring.py` receives. The scoring input structurally
    cannot contain them.
-2. Video frames are never transmitted or stored. Only events: "no face, 8s",
-   "second voice detected", "tab hidden, 14s".
-3. Camera analysis has its own consent checkbox. Declining it still allows the
-   interview, marked unproctored.
-4. No signal, alone or combined, rejects anyone. They surface next to the
-   transcript for a human to interpret.
+2. Only events are stored, never media: "tab hidden, 14s".
+3. No signal, alone or combined, rejects anyone. They surface next to the
+   transcript, with a timestamp, for a human to interpret.
 
 ## Signals deliberately not collected
 
