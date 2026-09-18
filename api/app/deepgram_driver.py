@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import Any
 
 import websockets
@@ -103,9 +104,10 @@ def build_settings(session: Session, resume: bool = False) -> dict[str, Any]:
         "speak": {"provider": {"type": "deepgram", "version": "v2", "model": "flux-kit-en"}},
         "think": {
             "provider": {
-                "type": "google",
+                "type": settings.voice_think_provider,
                 "model": settings.voice_think_model,
-                "temperature": 0.3,
+                # No temperature: Anthropic models reject it here and the socket
+                # fails with a generic "Failed to think", which points nowhere.
             },
             "prompt": render_system_prompt(session.ctx),
             "functions": functions,
@@ -168,8 +170,10 @@ class DeepgramInterview:
         # facts are load-bearing; see inject_text and stream_silence.
         self._idle = asyncio.Event()
         self._idle.set()
+        self._last_frame = 0.0
         self._silence_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
+        self._quiet_task: asyncio.Task | None = None
 
     async def connect(self, resume: bool = False) -> None:
         settings = get_settings()
@@ -226,7 +230,7 @@ class DeepgramInterview:
 
         self._watchdog_task = asyncio.create_task(watch())
 
-    async def inject_text(self, text: str, timeout: float = 60.0) -> None:
+    async def inject_text(self, text: str, timeout: float = 30.0) -> None:
         """Drive a turn without audio.
 
         Same socket, same model, same tools, no microphone. This is the fallback
@@ -243,7 +247,26 @@ class DeepgramInterview:
         except TimeoutError:
             # Better a turn out of order than a candidate waiting on silence.
             pass
+        if not self.ws:
+            return  # closed while we were waiting for the agent to finish
         await self.ws.send(json.dumps({"type": "InjectUserMessage", "content": text}))
+
+    def start_quiet_watch(self, quiet_seconds: float = 6.0) -> None:
+        """Treat a gap in traffic as the agent having finished.
+
+        AgentAudioDone is the documented signal and it is not reliably delivered
+        -- observed never arriving across a 50 second wait on a socket that was
+        otherwise healthy. Waiting on it alone deadlocks the next turn, so a gap
+        with no frames at all counts as finished too.
+        """
+
+        async def watch() -> None:
+            while self.ws:
+                await asyncio.sleep(0.5)
+                if self._last_frame and time.monotonic() - self._last_frame > quiet_seconds:
+                    self._idle.set()
+
+        self._quiet_task = asyncio.create_task(watch())
 
     def stream_silence(self, sample_rate: int = AUDIO_INPUT_RATE) -> None:
         """Feed the socket silence when no real microphone is attached.
@@ -285,6 +308,7 @@ class DeepgramInterview:
     async def _handle(self, frame: dict[str, Any]) -> None:
         kind = frame.get("type")
 
+        self._last_frame = time.monotonic()
         if kind in ("AgentStartedSpeaking", "AgentThinking", "UserStartedSpeaking"):
             self._idle.clear()
         elif kind == "AgentAudioDone":
@@ -349,10 +373,10 @@ class DeepgramInterview:
         )
 
     async def close(self) -> None:
-        for task in (self._silence_task, self._watchdog_task):
+        for task in (self._silence_task, self._watchdog_task, self._quiet_task):
             if task:
                 task.cancel()
-        self._silence_task = self._watchdog_task = None
+        self._silence_task = self._watchdog_task = self._quiet_task = None
         self._idle.set()
         if self.ws:
             try:

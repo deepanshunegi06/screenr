@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     # The model Deepgram runs for voice interviews. Separate from llm_model:
     # that one names a model on OUR provider, this one names a model on theirs.
-    voice_think_model: str = "gemini-3.1-flash-lite"
+    voice_think_model: str = "claude-sonnet-5"
+    voice_think_provider: str = "anthropic"
     # Needed to read per-session usage back out of Deepgram.
     deepgram_project_id: str = ""
     # Where Deepgram calls us back for each turn. Must be publicly reachable.
