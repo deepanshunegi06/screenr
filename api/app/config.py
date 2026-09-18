@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     anthropic_api_key: str = ""
 
-    database_url: str = "postgresql+psycopg://screenr:screenr@localhost:5432/screenr"
+    # SQLite lives here. Postgres would be the move for a multi-instance deploy;
+    # for one box, a file is the whole persistence story.
+    data_dir: str = "data"
 
     deepgram_api_key: str = ""
     # The model Deepgram runs for voice interviews. Separate from llm_model:

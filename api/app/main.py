@@ -150,7 +150,16 @@ def record_decision(
     session = _require(session_id)
     session.decision = body.decision
     session.decided_by = recruiter
+    session.decided_at = datetime.now(UTC)
+    store.save(session)
     return {"decision": session.decision, "decidedBy": recruiter}
+
+
+@app.delete("/sessions/{session_id}")
+def delete_session(session_id: str, _: str = Depends(current_recruiter)) -> dict:
+    if not store.delete(session_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such interview")
+    return {"deleted": session_id}
 
 
 # --- candidate ---------------------------------------------------------------

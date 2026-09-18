@@ -27,7 +27,7 @@ import websockets
 from .agent.graph import render_system_prompt
 from .agent.schemas import deepgram_functions, run_tool
 from .config import get_settings
-from .store import Session
+from .store import Session, save
 
 AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 
@@ -407,6 +407,7 @@ class DeepgramInterview:
             )
 
         self.session.ctx.tool_log.append(names)
+        save(self.session)
 
         # The prompt carries live state -- what is still uncovered, what has already
         # been asked. Tools just changed it, so refresh, or the model keeps working

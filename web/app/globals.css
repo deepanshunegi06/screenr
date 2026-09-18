@@ -1,55 +1,102 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #16212b;
-  --color-ink-soft: #2e3d49;
-  --color-muted: #64727d;
-  --color-faint: #97a3ac;
-  --color-paper: #e7eaec;
-  --color-sheet: #fbfcfc;
-  --color-rule: #cfd6da;
-  --color-rule-soft: #e1e6e9;
+  /* Surfaces */
+  --color-bg: #f6f6f7;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f1f3;
+  --color-surface-3: #e9e9ec;
 
-  --color-pine: #1b5e57;
-  --color-pine-soft: #dcebe8;
-  --color-amber: #a6690e;
-  --color-amber-soft: #f6ecdb;
-  --color-rust: #93372b;
-  --color-rust-soft: #f5e3e0;
+  /* Borders */
+  --color-border: #e3e3e7;
+  --color-border-strong: #cfcfd5;
 
-  --font-display: var(--font-newsreader), Georgia, serif;
-  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
+  /* Text */
+  --color-fg: #17171a;
+  --color-fg-2: #4f4f57;
+  --color-fg-3: #86868e;
+  --color-fg-4: #b1b1b8;
+
+  /* Accent */
+  --color-accent: #2f5fe0;
+  --color-accent-hover: #264dbd;
+  --color-accent-soft: #eaf0fd;
+  --color-accent-fg: #1e3f9c;
+
+  /* Semantic */
+  --color-ok: #1b8a4a;
+  --color-ok-soft: #e6f5ec;
+  --color-ok-fg: #146536;
+  --color-warn: #b7791f;
+  --color-warn-soft: #fbf3e3;
+  --color-warn-fg: #7f5312;
+  --color-bad: #c53030;
+  --color-bad-soft: #fcebeb;
+  --color-bad-fg: #8f2020;
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --shadow-sm: 0 1px 2px rgba(23, 23, 26, 0.06);
+  --shadow-md: 0 4px 12px rgba(23, 23, 26, 0.08), 0 1px 3px rgba(23, 23, 26, 0.06);
+  --shadow-lg: 0 12px 32px rgba(23, 23, 26, 0.12), 0 2px 6px rgba(23, 23, 26, 0.08);
 }
 
 html {
-  background: var(--color-paper);
+  background: var(--color-bg);
+  font-size: 14px;
 }
 
 body {
-  color: var(--color-ink);
+  color: var(--color-fg);
   font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1, "ss01" 1;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
-  background: var(--color-pine);
-  color: var(--color-sheet);
+  background: var(--color-accent-soft);
+  color: var(--color-fg);
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-pine);
-  outline-offset: 2px;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
 }
 
-/* Ruled label: the small uppercase mono tags that name a region of the page.
-   Used sparingly -- they mark structure, they are not decoration. */
-.eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-faint);
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/* Tabular numerals wherever numbers line up in columns. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Skeleton shimmer for loading states. */
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--color-surface-2) 25%, var(--color-surface-3) 50%, var(--color-surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
