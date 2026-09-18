@@ -178,7 +178,7 @@ export function GazeCalibration({
     <div className="fixed inset-0 z-50 flex flex-col bg-fg">
       <div className="flex items-start justify-between gap-4 px-5 py-4">
         <div>
-          <p className="text-[15px] font-semibold text-white">Setting up the camera checks</p>
+          <p className="display text-[19px] text-white">Setting up the camera checks</p>
           <p className="mt-0.5 text-[13px] text-white/60">
             {phase === "verify"
               ? "One last check that it works."
@@ -226,7 +226,7 @@ export function GazeCalibration({
         <div className="absolute inset-x-0 top-1/2 flex -translate-y-28 flex-col items-center px-6 text-center">
           {phase === "points" && (
             <>
-              <p className="text-[19px] font-medium text-white" role="status">
+              <p className="display text-[23px] text-white" role="status">
                 {POINTS[step].label}
               </p>
               <p className="mt-1 text-[13px] text-white/50">
@@ -237,7 +237,7 @@ export function GazeCalibration({
 
           {phase === "verify" && (
             <>
-              <p className="text-[19px] font-medium text-white" role="status">
+              <p className="display text-[23px] text-white" role="status">
                 Now look away from the screen
               </p>
               <p className="mt-1 max-w-sm text-[13px] text-white/50">
@@ -248,7 +248,7 @@ export function GazeCalibration({
 
           {phase === "failed" && (
             <>
-              <p className="max-w-md text-[17px] font-medium text-white" role="alert">
+              <p className="display max-w-md text-[21px] text-white" role="alert">
                 {message}
               </p>
               <div className="mt-5 flex gap-2">
