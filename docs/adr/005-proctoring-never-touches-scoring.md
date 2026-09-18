@@ -28,8 +28,14 @@ focus, and exiting full screen each spend one of three warnings; the third ends
 the interview. Pastes, a second display, and a mid-interview audio device change
 are recorded as notes and spend nothing.
 
-Opt-in: face presence and head position from MediaPipe's face landmarker,
-running on the candidate's device.
+Opt-in: face presence, head position and gaze from MediaPipe's face landmarker,
+running on the candidate's device. Looking away from the screen spends a warning
+like leaving the window does; being out of frame or having a second person in
+shot is a note.
+
+Always on, server side: the candidate's audio is forked to Deepgram's streaming
+transcriber with diarization enabled, purely to count speakers. A second speaker
+label is a note.
 
 Ending an interview is not judging one. The scorecard records that it ended this
 way; every decision about the candidate is still a person's.
@@ -52,20 +58,28 @@ Enforced boundaries:
 ## On gaze, and what "looking away" is allowed to mean
 
 Retinal tracking is not possible from a webcam — it needs infrared hardware
-pointed into the eye. What the landmarker does give is iris position, and from it
-a gaze estimate carrying roughly 5-10 degrees of error uncalibrated, which is
-wider than a laptop screen subtends. It cannot distinguish reading a second
-monitor from glancing at the edge of this one.
+pointed into the eye. What the landmarker gives is iris position, and used raw it
+is worth little: head rotation swamps it, and everyone's eyes sit differently
+relative to their camera. A first attempt keyed on head rotation alone missed the
+case that matters most, someone glancing at a phone while facing forward.
 
-So head rotation carries the signal and iris offset only corroborates it, both
-measured against a baseline taken from the candidate's own first few seconds —
-everyone sits at a different angle to their webcam, and an absolute threshold
-would flag posture. Thresholds are wide (28 degrees of yaw) and an event must
-persist six seconds. A false note on someone's hiring record is worse than a
-missed one.
+So the candidate looks at four points before the interview — centre, left, right,
+and down where a phone would be — and the tracker records where their eyes and
+head actually sit for each. At runtime a reading is classified as whichever
+reference it is nearest. That makes eye movement detectable while the head stays
+still, because the comparison is against this person's own poses rather than an
+absolute angle.
 
-The output is a duration: "looked away for eleven seconds at 6:42". Never a
-percentage, never a rate, never a verdict.
+Guards, because this now costs a warning:
+
+* An off-screen reference must be 1.35x nearer than the on-screen one. A bare
+  nearest-neighbour would flip on noise.
+* The condition must hold five seconds. Everyone glances away mid-sentence.
+* A calibration whose off-screen points barely differ from centre is discarded
+  and the interview runs unproctored. Acting on noise is worse than not acting.
+
+The output is a duration: "looked down, away from the screen for 11 seconds at
+6:42". Never a percentage, never an attention rate, never a verdict.
 
 ## Signals deliberately not collected
 
@@ -75,10 +89,13 @@ make several of these easy to compute. They are left out because they measure ho
 a person behaves rather than what they said, and they fall hardest on
 neurodivergent and disabled candidates. None would improve a hiring decision.
 
-Speaker diarization was tried and is not available: Deepgram's Voice Agent
-rejects `diarize` and `multichannel` on the listen provider, so a second person
-feeding answers cannot be detected from the audio on this path. Rather than ship
-a heuristic dressed up as detection, it is left out and said plainly here.
+Speaker diarization is not available on the Voice Agent socket -- `diarize` and
+`multichannel` are both rejected on `agent.listen.provider`, verified against the
+live API. It is available on the ordinary `/v1/listen` streaming endpoint, so the
+audio is forked to a second connection whose only job is labelling speakers. A
+second label is a note, never a conclusion: a television, a housemate and a
+diarizer mistake are indistinguishable from there. Four words is the floor for a
+label to count, and at most three notes are raised per interview.
 
 No browser-side proctoring survives a phone propped beside the laptop. Anything
 claiming to prevent cheating is overselling; these signals only narrow where a

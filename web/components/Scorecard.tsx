@@ -41,6 +41,7 @@ const INTEGRITY_LABEL: Record<string, string> = {
   no_face: "No one in frame",
   multiple_faces: "More than one person in frame",
   looking_away: "Looked away from the screen",
+  second_voice: "Another voice was heard",
   camera_lost: "Camera stopped",
 };
 

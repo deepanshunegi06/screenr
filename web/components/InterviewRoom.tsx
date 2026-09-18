@@ -7,7 +7,13 @@ import { Badge, Button, Logo, Textarea } from "@/components/ui";
 import { Wrapping } from "@/components/Wrapping";
 import { AgentVoice, startMicrophone, type MicHandle } from "@/lib/audio";
 import { exitFullscreen, watchIntegrity, type IntegrityWatch } from "@/lib/integrity";
-import { startProctoring, type ProctorHandle, type ProctorStatus } from "@/lib/proctor";
+import {
+  watchCamera,
+  type GazeCalibration,
+  type GazeTracker,
+  type ProctorHandle,
+  type ProctorStatus,
+} from "@/lib/proctor";
 import { api, mmss, wsUrl } from "@/lib/api";
 
 type Line = { speaker: "agent" | "you"; text: string; tools?: string[] };
@@ -39,7 +45,8 @@ export function InterviewRoom({
   candidate,
   maxMinutes,
   voice,
-  cameraChecks,
+  tracker,
+  calibration,
   onFinished,
 }: {
   token: string;
@@ -47,8 +54,10 @@ export function InterviewRoom({
   maxMinutes: number;
   /** Created and unlocked inside the Start click, so autoplay policy is satisfied. */
   voice: AgentVoice;
-  /** The candidate opted in to on-device camera checks. */
-  cameraChecks: boolean;
+  /** Camera and model, already running from the calibration step. Null when the
+   *  candidate declined or calibration could not be trusted. */
+  tracker: GazeTracker | null;
+  calibration: GazeCalibration | null;
   onFinished: () => void;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
@@ -66,7 +75,7 @@ export function InterviewRoom({
   const [warning, setWarning] = useState<{ text: string; count: number } | null>(null);
   const [removed, setRemoved] = useState(false);
   const [proctorStatus, setProctorStatus] = useState<ProctorStatus | null>(null);
-  const [proctorStream, setProctorStream] = useState<MediaStream | null>(null);
+
 
   const socket = useRef<WebSocket | null>(null);
   const mic = useRef<MicHandle | null>(null);
@@ -90,8 +99,8 @@ export function InterviewRoom({
   const stopProctor = useCallback(() => {
     proctor.current?.stop();
     proctor.current = null;
-    setProctorStream(null);
-  }, []);
+    tracker?.stop();
+  }, [tracker]);
 
   const stopMic = useCallback(() => {
     mic.current?.stop();
@@ -292,22 +301,15 @@ export function InterviewRoom({
         }
       }
 
-      // Camera checks are opt-in and never required. If the camera is refused or
-      // the model will not load, the interview carries on unproctored.
-      if (cameraChecks && !cancelled) {
-        try {
-          const handle = await startProctoring(
-            (event) => send({ type: "Integrity", kind: event.kind, detail: event.detail }),
-            setProctorStatus,
-          );
-          if (cancelled) handle.stop();
-          else {
-            proctor.current = handle;
-            setProctorStream(handle.stream);
-          }
-        } catch {
-          // Nothing to tell the candidate: declining changes nothing for them.
-        }
+      // Camera checks only run if the candidate opted in and calibration worked.
+      // Looking away spends a warning; the rest are notes for the recruiter.
+      if (tracker && !cancelled) {
+        proctor.current = watchCamera(
+          tracker,
+          calibration,
+          (event) => handleSignal(event.kind, event.detail, event.kind === "looking_away"),
+          setProctorStatus,
+        );
       }
     }
 
@@ -329,7 +331,7 @@ export function InterviewRoom({
       }
       socket.current = null;
     };
-  }, [token, voice, attempt, cameraChecks, send, startMic, stopMic, stopProctor, handleSignal]);
+  }, [token, voice, attempt, tracker, calibration, startMic, stopMic, stopProctor, handleSignal]);
 
   const sendTyped = useCallback(() => {
     const answer = draft.trim();
@@ -490,11 +492,11 @@ export function InterviewRoom({
           <div ref={endRef} />
         </div>
 
-        {cameraChecks && (
+        {tracker && (
           <aside className="hidden shrink-0 sm:block">
             <div className="sticky top-20">
               <ProctorPanel
-                stream={proctorStream}
+                stream={tracker.stream}
                 status={proctorStatus}
                 warnings={warnings}
                 maxWarnings={MAX_WARNINGS}

@@ -1,22 +1,25 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 
+import { GazeCalibration } from "@/components/GazeCalibration";
 import { InterviewRoom } from "@/components/InterviewRoom";
 import { Button, Card, Logo, Skeleton } from "@/components/ui";
 import { AgentVoice } from "@/lib/audio";
 import { enterFullscreen } from "@/lib/integrity";
+import { createTracker, type GazeCalibration as Calibration, type GazeTracker } from "@/lib/proctor";
 import { api, type InterviewIntro } from "@/lib/api";
 
-type Stage = "loading" | "invalid" | "consent" | "live" | "done";
+type Stage = "loading" | "invalid" | "consent" | "calibrating" | "live" | "done";
 
 export default function InterviewPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
   const [intro, setIntro] = useState<InterviewIntro | null>(null);
   const [stage, setStage] = useState<Stage>("loading");
-  const [proctoring, setProctoring] = useState(false);
   // One AgentVoice for the page, unlocked inside the Start click.
   const [voice] = useState(() => new AgentVoice());
+  const [tracker, setTracker] = useState<GazeTracker | null>(null);
+  const [calibration, setCalibration] = useState<Calibration | null>(null);
 
   useEffect(() => {
     api
@@ -31,6 +34,30 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
   }, [token]);
 
   useEffect(() => () => voice.close(), [voice]);
+
+  /** Camera and model live for the whole interview; calibration and monitoring
+   *  share them, so the candidate is only prompted for the camera once. */
+  const start = useCallback(
+    async (cameraChecks: boolean) => {
+      await voice.unlock();
+      // Inside the click: browsers only grant fullscreen from a user gesture.
+      await enterFullscreen();
+
+      if (!cameraChecks) {
+        setStage("live");
+        return;
+      }
+      try {
+        setTracker(await createTracker());
+        setStage("calibrating");
+      } catch {
+        // Camera refused or unavailable. The interview runs unproctored rather
+        // than not at all.
+        setStage("live");
+      }
+    },
+    [voice],
+  );
 
   if (stage === "loading") {
     return (
@@ -56,7 +83,9 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
   if (stage === "done") {
     return (
       <Frame>
-        <h1 className="text-[18px] font-semibold text-fg">Thanks, {intro.candidate}. That&apos;s the end.</h1>
+        <h1 className="text-[18px] font-semibold text-fg">
+          Thanks, {intro.candidate}. That&apos;s the end.
+        </h1>
         <p className="mt-2 text-[14px] leading-relaxed text-fg-2">
           Someone from the team reviews the conversation and decides what happens next. Nothing
           was decided automatically.
@@ -66,16 +95,20 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
   }
 
   if (stage === "consent") {
+    return <Consent token={token} intro={intro} onStart={start} />;
+  }
+
+  if (stage === "calibrating" && tracker) {
     return (
-      <Consent
-        token={token}
-        intro={intro}
-        onStart={async (cameraChecks) => {
-          await voice.unlock();
-          // Must happen inside the click: browsers only grant fullscreen from a
-          // user gesture. Refusal is not fatal -- leaving it simply costs a warning.
-          await enterFullscreen();
-          setProctoring(cameraChecks);
+      <GazeCalibration
+        tracker={tracker}
+        onDone={(result) => {
+          setCalibration(result);
+          setStage("live");
+        }}
+        onSkip={() => {
+          tracker.stop();
+          setTracker(null);
           setStage("live");
         }}
       />
@@ -88,7 +121,8 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
       candidate={intro.candidate}
       maxMinutes={intro.maxMinutes}
       voice={voice}
-      cameraChecks={proctoring}
+      tracker={tracker}
+      calibration={calibration}
       onFinished={() => setStage("done")}
     />
   );
@@ -142,17 +176,20 @@ function Consent({
   return (
     <Frame>
       <div className="text-[12px] font-medium text-fg-2">{intro.roleTitle}</div>
-      <h1 className="mt-1 text-[18px] font-semibold text-fg">Hello {intro.candidate}. Here&apos;s how this works.</h1>
+      <h1 className="mt-1 text-[18px] font-semibold text-fg">
+        Hello {intro.candidate}. Here&apos;s how this works.
+      </h1>
 
       <ol className="mt-5 space-y-3 text-[14px] leading-relaxed text-fg">
         <li className="flex gap-3">
           <span className="tnum w-4 shrink-0 text-fg-3">1</span>
-          You&apos;ll talk with an AI interviewer for up to {intro.maxMinutes} minutes. It asks follow-up
-          questions based on your answers, so there&apos;s no fixed list.
+          You&apos;ll talk with an AI interviewer for up to {intro.maxMinutes} minutes. It asks
+          follow-up questions based on your answers, so there&apos;s no fixed list.
         </li>
         <li className="flex gap-3">
           <span className="tnum w-4 shrink-0 text-fg-3">2</span>
-          It writes down what you say. Every note it makes has to point at something you actually said.
+          It writes down what you say. Every note it makes has to point at something you actually
+          said.
         </li>
         <li className="flex gap-3">
           <span className="tnum w-4 shrink-0 text-fg-3">3</span>
@@ -160,7 +197,8 @@ function Consent({
         </li>
         <li className="flex gap-3">
           <span className="tnum w-4 shrink-0 text-fg-3">4</span>
-          Say &quot;I don&apos;t know&quot; when you don&apos;t. Honesty scores better than a confident guess.
+          Say &quot;I don&apos;t know&quot; when you don&apos;t. Honesty scores better than a
+          confident guess.
         </li>
       </ol>
 
@@ -173,7 +211,7 @@ function Consent({
         </p>
       </div>
 
-      <label className="mt-6 flex cursor-pointer gap-3 rounded-md border border-border bg-surface-2/50 p-3">
+      <label className="mt-5 flex cursor-pointer gap-3 rounded-md border border-border bg-surface-2/50 p-3">
         <input
           type="checkbox"
           checked={agreed}
@@ -201,9 +239,10 @@ function Consent({
         <span className="text-[14px] text-fg">
           Camera checks during the interview.
           <span className="mt-0.5 block text-[12px] text-fg-3">
-            Optional. Face presence and head position, checked on your device — no video is sent
-            or stored, only notes like &quot;looked away for 11 seconds&quot;. Declining is fine and
-            changes nothing about your scoring.
+            Optional. You&apos;ll look at four points first, so the checks know where your eyes sit.
+            After that, looking away from the screen also costs a warning. Everything runs on your
+            device — no video is sent or stored. Declining is fine and changes nothing about your
+            scoring.
           </span>
         </span>
       </label>

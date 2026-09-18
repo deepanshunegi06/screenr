@@ -19,7 +19,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from . import store
 from .auth import candidate_session_id
-from .deepgram_driver import BOOTSTRAP, RECONNECT, DeepgramInterview
+from .deepgram_driver import AUDIO_INPUT_RATE, BOOTSTRAP, RECONNECT, DeepgramInterview
+from .diarize import SecondVoiceWatch
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,6 +46,7 @@ INTEGRITY_KINDS = {
     "second_screen",
     "no_face",
     "multiple_faces",
+    "second_voice",
     "looking_away",
     "camera_lost",
     "audio_device_changed",
@@ -119,6 +121,15 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
         await _reject(socket, "Voice isn't available right now. Try again in a moment.")
         return
 
+    # Fork the candidate's audio to a plain streaming transcriber whose only job
+    # is to label speakers. The agent socket cannot do this; see diarize.py.
+    async def note_second_voice(detail: str) -> None:
+        store.add_integrity_flag(session, "second_voice", detail)
+
+    diarizer = SecondVoiceWatch(AUDIO_INPUT_RATE, note_second_voice)
+    if not await diarizer.start():
+        diarizer = None
+
     pump = asyncio.create_task(dg.pump())
 
     def pump_done(task: asyncio.Task) -> None:
@@ -157,6 +168,8 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
 
             if (chunk := message.get("bytes")) is not None:
                 await dg.send_audio(chunk)
+                if diarizer:
+                    await diarizer.feed(chunk)
                 continue
 
             if (text := message.get("text")) is not None:
@@ -171,6 +184,8 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
         with contextlib.suppress(BaseException):
             await pump
         await dg.close()
+        if diarizer:
+            await diarizer.close()
         if _LIVE.get(session.id) is dg:
             _LIVE.pop(session.id, None)
         with contextlib.suppress(Exception):

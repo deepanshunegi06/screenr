@@ -40,17 +40,19 @@ export function ProctorPanel({
       ? { label: "No one in frame", tone: "text-warn", dot: "bg-warn" }
       : status.faces > 1
         ? { label: `${status.faces} people in frame`, tone: "text-warn", dot: "bg-warn" }
-        : !status.calibrated
-          ? { label: "Calibrating", tone: "text-fg-3", dot: "bg-fg-4" }
-          : status.away
-            ? { label: "Looking away", tone: "text-warn", dot: "bg-warn" }
-            : { label: "In frame", tone: "text-fg-2", dot: "bg-ok" };
+        : status.looking
+          ? {
+              label: status.looking === "down" ? "Looking down" : `Looking ${status.looking}`,
+              tone: "text-warn",
+              dot: "bg-warn",
+            }
+          : { label: "Looking at the screen", tone: "text-fg-2", dot: "bg-ok" };
 
   return (
     <div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
       <div
         className={`aspect-[4/3] w-[148px] overflow-hidden rounded-md bg-surface-3 ring-1 transition-colors ${
-          status && (status.faces !== 1 || status.away) ? "ring-warn" : "ring-transparent"
+          status && (status.faces !== 1 || status.looking) ? "ring-warn" : "ring-transparent"
         }`}
       >
         {/* Mirrored: an unmirrored self-view is disorienting. */}
