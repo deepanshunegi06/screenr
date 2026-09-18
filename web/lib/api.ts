@@ -110,6 +110,10 @@ export type SessionRow = {
   createdAt: string;
 };
 
+export function wsUrl(path: string) {
+  return BASE.replace(/^http/, "ws") + path;
+}
+
 export function mmss(seconds: number) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);

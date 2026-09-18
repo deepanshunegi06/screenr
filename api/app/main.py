@@ -16,6 +16,7 @@ from .auth import (
 )
 from .config import get_settings
 from .scoring import build_scorecard
+from .relay import router as relay_router
 from .usage import session_usage
 from .voice import router as voice_router
 
@@ -239,6 +240,7 @@ def report_integrity(body: IntegrityEvent) -> dict:
 
 
 app.include_router(voice_router)
+app.include_router(relay_router)
 
 
 @app.get("/healthz")

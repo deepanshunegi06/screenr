@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { Wordmark, buttonClass, inputClass } from "@/components/Chrome";
+import { InterviewRoom } from "@/components/InterviewRoom";
 import { api, mmss } from "@/lib/api";
 
 type Line = { speaker: "agent" | "you"; text: string };
@@ -63,7 +64,13 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
     );
   }
 
-  return <Live token={token} candidate={intro.candidate} onFinished={() => setStage("done")} />;
+  return (
+    <InterviewRoom
+      token={token}
+      candidate={intro.candidate}
+      onFinished={() => setStage("done")}
+    />
+  );
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
@@ -103,7 +110,8 @@ function Consent({
     setBusy(true);
     try {
       await api.consent(token, recording, proctoring);
-      await api.start(token);
+      // The opening question comes from the voice socket, not from here. Calling
+      // the typed start endpoint would burn that turn before the agent connects.
       onStarted();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Could not start");
@@ -183,134 +191,6 @@ function Consent({
         <button className={`${buttonClass} mt-8`} onClick={begin} disabled={busy}>
           {busy ? "Starting…" : "Start the interview"}
         </button>
-      </div>
-    </div>
-  );
-}
-
-function Live({
-  token,
-  candidate,
-  onFinished,
-}: {
-  token: string;
-  candidate: string;
-  onFinished: () => void;
-}) {
-  const [lines, setLines] = useState<Line[]>([]);
-  const [draft, setDraft] = useState("");
-  const [thinking, setThinking] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    api.start(token).then((res) => {
-      if (res.say) setLines([{ speaker: "agent", text: res.say }]);
-    });
-  }, [token]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lines, thinking]);
-
-  // Tab and window switches are reported as observations for a human to read.
-  // Nothing here reaches scoring -- see docs/adr/005.
-  useEffect(() => {
-    let hiddenAt = 0;
-    const onVisibility = () => {
-      if (document.hidden) {
-        hiddenAt = Date.now();
-      } else if (hiddenAt) {
-        const seconds = Math.round((Date.now() - hiddenAt) / 1000);
-        if (seconds >= 3) {
-          api.integrity(token, "tab_hidden", `Switched away for ${seconds}s`);
-        }
-        hiddenAt = 0;
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [token]);
-
-  const send = useCallback(async () => {
-    const answer = draft.trim();
-    if (!answer || thinking) return;
-    setDraft("");
-    setLines((prev) => [...prev, { speaker: "you", text: answer }]);
-    setThinking(true);
-    try {
-      const res = await api.turn(token, answer);
-      setLines((prev) => [...prev, { speaker: "agent", text: res.say }]);
-      if (res.finished) setTimeout(onFinished, 2500);
-    } catch {
-      setLines((prev) => [
-        ...prev,
-        { speaker: "agent", text: "Something dropped on my side. Say that again?" },
-      ]);
-    } finally {
-      setThinking(false);
-    }
-  }, [draft, thinking, token, onFinished]);
-
-  return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="flex items-center justify-between border-b border-rule bg-sheet px-6 py-4">
-        <Wordmark />
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-2 text-[12px] text-muted">
-            <span className="h-1.5 w-1.5 rounded-full bg-rust" />
-            Recording
-          </span>
-          <span className="font-mono text-[13px] text-ink">{mmss(elapsed)}</span>
-        </div>
-      </header>
-
-      <div className="mx-auto w-full max-w-2xl flex-1 px-6 py-10">
-        {lines.map((line, i) => (
-          <div key={i} className="mb-7">
-            <p className="eyebrow">{line.speaker === "agent" ? "Interviewer" : candidate}</p>
-            <p
-              className={`mt-2 leading-relaxed ${
-                line.speaker === "agent"
-                  ? "font-display text-[19px] text-ink"
-                  : "text-[15px] text-ink-soft"
-              }`}
-            >
-              {line.text}
-            </p>
-          </div>
-        ))}
-        {thinking && <p className="eyebrow animate-pulse">Interviewer is thinking</p>}
-        <div ref={endRef} />
-      </div>
-
-      <div className="sticky bottom-0 border-t border-rule bg-sheet px-6 py-4">
-        <div className="mx-auto flex max-w-2xl gap-3">
-          <textarea
-            className={`${inputClass} h-[52px] resize-none`}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            placeholder="Type your answer. Enter to send."
-            disabled={thinking}
-          />
-          <button className={buttonClass} onClick={send} disabled={thinking || !draft.trim()}>
-            Send
-          </button>
-        </div>
-        <p className="mx-auto mt-2 max-w-2xl text-[12px] text-faint">
-          Typed for now — voice is being wired up.
-        </p>
       </div>
     </div>
   );

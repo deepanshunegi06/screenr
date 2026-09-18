@@ -35,6 +35,10 @@ AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 # mismatch here is silent: Deepgram accepts the frames and hears noise.
 AUDIO_INPUT_RATE = 16000
 
+# The line we send to make the agent open. It is scaffolding, not something the
+# candidate said, so it never reaches the transcript or the page.
+BOOTSTRAP = "[The candidate has joined. Begin the interview.]"
+
 # Tools whose effect cannot be walked back. Deepgram holds these until the
 # candidate has actually finished speaking, so the agent cannot end the interview
 # over the top of someone mid-sentence.
@@ -174,6 +178,10 @@ class DeepgramInterview:
         self._silence_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
         self._quiet_task: asyncio.Task | None = None
+        self._keepalive_task: asyncio.Task | None = None
+        # One turn at a time. Without this, several answers waiting on _idle
+        # are all released the moment it is set and arrive as one turn.
+        self._turn_lock = asyncio.Lock()
 
     async def connect(self, resume: bool = False) -> None:
         settings = get_settings()
@@ -184,7 +192,12 @@ class DeepgramInterview:
             AGENT_URL,
             additional_headers={"Authorization": f"Token {settings.deepgram_api_key}"},
             max_size=None,
+            # Deepgram does not answer protocol pings promptly, so the client's
+            # own keepalive policing closes a healthy socket with 1011. Their
+            # KeepAlive frame is the supported mechanism -- see start_keepalive.
+            ping_interval=None,
         )
+        self.start_keepalive()
         await self.ws.send(json.dumps(build_settings(self.session, resume=resume)))
 
     async def send_audio(self, chunk: bytes) -> None:
@@ -242,14 +255,42 @@ class DeepgramInterview:
         """
         if not self.ws:
             return
-        try:
-            await asyncio.wait_for(self._idle.wait(), timeout=timeout)
-        except TimeoutError:
-            # Better a turn out of order than a candidate waiting on silence.
-            pass
-        if not self.ws:
-            return  # closed while we were waiting for the agent to finish
-        await self.ws.send(json.dumps({"type": "InjectUserMessage", "content": text}))
+        async with self._turn_lock:
+            try:
+                await asyncio.wait_for(self._idle.wait(), timeout=timeout)
+            except TimeoutError:
+                # Better a turn out of order than a candidate waiting on silence.
+                pass
+            if not self.ws:
+                return  # closed while we were waiting for the agent to finish
+            try:
+                await self.ws.send(json.dumps({"type": "InjectUserMessage", "content": text}))
+                # Held until the agent answers, so the next turn queues behind
+                # this one rather than racing it.
+                self._idle.clear()
+                self._last_frame = time.monotonic()
+            except websockets.ConnectionClosed:
+                await self.close()
+
+    def start_keepalive(self, every: float = 5.0) -> None:
+        """Keep the socket open through silence.
+
+        A candidate thinking for thirty seconds sends no audio, and neither does
+        a typed interview. Without this the connection is dropped mid-answer and
+        the next injection fails with a closed socket.
+        """
+
+        async def beat() -> None:
+            while self.ws:
+                await asyncio.sleep(every)
+                if not self.ws:
+                    return
+                try:
+                    await self.ws.send(json.dumps({"type": "KeepAlive"}))
+                except (websockets.ConnectionClosed, TypeError):
+                    return
+
+        self._keepalive_task = asyncio.create_task(beat())
 
     def start_quiet_watch(self, quiet_seconds: float = 6.0) -> None:
         """Treat a gap in traffic as the agent having finished.
@@ -320,9 +361,11 @@ class DeepgramInterview:
             if text and role == "assistant":
                 self.session.record("agent", text)
                 self.session.ctx.asked.append(text)
-            elif text:
+            elif text and text != BOOTSTRAP:
                 self.session.record("candidate", text)
                 self.session.ctx.turn_count += 1
+            elif text == BOOTSTRAP:
+                return  # do not forward our own scaffolding to the browser
 
         elif kind == "FunctionCallRequest":
             await self._run_functions(frame.get("functions", []))
@@ -373,10 +416,16 @@ class DeepgramInterview:
         )
 
     async def close(self) -> None:
-        for task in (self._silence_task, self._watchdog_task, self._quiet_task):
+        for task in (
+            self._silence_task,
+            self._watchdog_task,
+            self._quiet_task,
+            self._keepalive_task,
+        ):
             if task:
                 task.cancel()
-        self._silence_task = self._watchdog_task = self._quiet_task = None
+        self._silence_task = self._watchdog_task = None
+        self._quiet_task = self._keepalive_task = None
         self._idle.set()
         if self.ws:
             try:
