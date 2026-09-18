@@ -17,14 +17,14 @@ const NAV = [
 
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-2">
+    <span className="inline-flex items-baseline gap-[7px]">
       <span
         aria-hidden
-        className="grid h-5 w-5 place-items-center rounded-[5px] bg-fg text-[10px] font-semibold text-surface"
+        className="display grid h-[18px] w-[18px] translate-y-[3px] place-items-center rounded-[2px] bg-fg text-[13px] leading-none text-surface"
       >
         s
       </span>
-      {!compact && <span className="text-[14px] font-semibold tracking-[-0.01em] text-fg">screenr</span>}
+      {!compact && <span className="display text-[17px] leading-none text-fg">screenr</span>}
     </span>
   );
 }
@@ -39,13 +39,13 @@ export function AppShell({
   const pathname = usePathname();
   return (
     <div className="flex min-h-dvh">
-      <aside className="sticky top-0 hidden h-dvh w-[216px] shrink-0 flex-col border-r border-border bg-surface md:flex">
-        <div className="flex h-12 items-center px-4">
+      <aside className="sticky top-0 hidden h-dvh w-[212px] shrink-0 flex-col border-r border-border bg-surface md:flex">
+        <div className="flex h-14 items-center px-5">
           <Link href="/" className="rounded-sm">
             <Logo />
           </Link>
         </div>
-        <nav className="mt-1 flex flex-col gap-0.5 px-2" aria-label="Main">
+        <nav className="mt-2 flex flex-col px-3" aria-label="Main">
           {NAV.map((item) => {
             const active = item.match(pathname);
             return (
@@ -53,8 +53,10 @@ export function AppShell({
                 key={item.href}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                className={`flex h-8 items-center rounded-md px-2.5 text-[13px] transition-colors ${
-                  active ? "bg-surface-2 font-medium text-fg" : "text-fg-2 hover:bg-surface-2 hover:text-fg"
+                className={`-ml-px flex h-8 items-center border-l pl-3 text-[13px] transition-colors ${
+                  active
+                    ? "border-accent font-medium text-fg"
+                    : "border-transparent text-fg-2 hover:border-border-strong hover:text-fg"
                 }`}
               >
                 {item.label}
@@ -66,7 +68,7 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 items-center justify-between border-b border-border bg-surface px-4 md:hidden">
+        <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-4 md:hidden">
           <Logo />
           {right}
         </header>
@@ -88,7 +90,7 @@ export function PageHeader({
   crumbs?: { href?: string; label: string }[];
 }) {
   return (
-    <div className="border-b border-border bg-surface px-6 py-4">
+    <div className="border-b border-border bg-surface px-6 py-5">
       {crumbs && crumbs.length > 0 && (
         <nav aria-label="Breadcrumb" className="mb-1.5 flex items-center gap-1.5 text-[12px] text-fg-3">
           {crumbs.map((c, i) => (
@@ -107,8 +109,8 @@ export function PageHeader({
       )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-[18px] font-semibold tracking-[-0.01em] text-fg">{title}</h1>
-          {description && <p className="mt-0.5 text-[13px] text-fg-2">{description}</p>}
+          <h1 className="display text-[24px] leading-tight text-fg">{title}</h1>
+          {description && <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-fg-2">{description}</p>}
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>
@@ -134,12 +136,14 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 const BUTTON_BASE =
   "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors " +
   "disabled:cursor-not-allowed disabled:opacity-50 select-none";
-const BUTTON_SIZE = { sm: "h-7 px-2.5 text-[12px]", md: "h-8 px-3 text-[13px]" };
+const BUTTON_SIZE = { sm: "h-7 px-2.5 text-[12px]", md: "h-8 px-3.5 text-[13px]" };
 const BUTTON_VARIANT = {
-  primary: "bg-accent text-white hover:bg-accent-hover shadow-sm",
-  secondary: "border border-border bg-surface text-fg hover:bg-surface-2 shadow-sm",
+  // Ink, not blue: the primary action reads as a stamp on the page, and leaves
+  // the accent free to mean "this is a mark on the record".
+  primary: "bg-fg text-bg hover:bg-fg-2",
+  secondary: "border border-border-strong bg-surface text-fg hover:bg-surface-2",
   ghost: "text-fg-2 hover:bg-surface-2 hover:text-fg",
-  danger: "border border-border bg-surface text-bad hover:bg-bad-soft shadow-sm",
+  danger: "border border-border-strong bg-surface text-bad hover:bg-bad-soft",
 };
 
 export function Button({ variant = "secondary", size = "md", loading, children, className = "", ...rest }: ButtonProps) {
@@ -165,7 +169,7 @@ export function Spinner({ className = "" }: { className?: string }) {
 }
 
 export const inputClass =
-  "h-8 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-fg shadow-sm " +
+  "h-8 w-full rounded-sm border border-border-strong bg-surface px-2.5 text-[13px] text-fg " +
   "placeholder:text-fg-4 hover:border-border-strong focus:border-accent focus:outline-none " +
   "disabled:bg-surface-2 disabled:text-fg-3";
 
@@ -197,7 +201,7 @@ export function Field({
 }) {
   return (
     <div>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-[12px] font-medium text-fg-2">
+      <label htmlFor={htmlFor} className="mb-1.5 block text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">
         {label}
       </label>
       {children}
@@ -227,7 +231,7 @@ const BADGE_TONE: Record<Tone, string> = {
 export function Badge({ tone = "neutral", children, dot }: { tone?: Tone; children: ReactNode; dot?: boolean }) {
   return (
     <span
-      className={`inline-flex h-[22px] items-center gap-1.5 rounded-[5px] border px-2 text-[12px] font-medium ${BADGE_TONE[tone]}`}
+      className={`inline-flex h-[21px] items-center gap-1.5 rounded-[3px] border px-1.5 text-[12px] font-medium ${BADGE_TONE[tone]}`}
     >
       {dot && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />}
       {children}
@@ -253,7 +257,7 @@ export function Verdict({ value }: { value: "advance" | "another_round" | "below
 
 export function Card({ children, className = "", padded = true }: { children: ReactNode; className?: string; padded?: boolean }) {
   return (
-    <div className={`rounded-lg border border-border bg-surface shadow-sm ${padded ? "p-4" : ""} ${className}`}>
+    <div className={`rounded-md border border-border bg-surface ${padded ? "p-5" : ""} ${className}`}>
       {children}
     </div>
   );
@@ -261,8 +265,8 @@ export function Card({ children, className = "", padded = true }: { children: Re
 
 export function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-baseline justify-between gap-3">
-      <h2 className="text-[13px] font-semibold text-fg">{children}</h2>
+    <div className="mb-3 flex items-baseline justify-between gap-3 border-b border-border pb-2">
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.09em] text-fg-3">{children}</h2>
       {aside && <span className="text-[12px] text-fg-3">{aside}</span>}
     </div>
   );
@@ -271,9 +275,9 @@ export function SectionTitle({ children, aside }: { children: ReactNode; aside?:
 export function Stat({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: Tone }) {
   const color = tone ? { neutral: "text-fg", accent: "text-accent", ok: "text-ok", warn: "text-warn", bad: "text-bad" }[tone] : "text-fg";
   return (
-    <div className="rounded-lg border border-border bg-surface p-3 shadow-sm">
-      <div className="text-[12px] text-fg-3">{label}</div>
-      <div className={`tnum mt-1 text-[20px] font-semibold leading-none tracking-[-0.01em] ${color}`}>{value}</div>
+    <div className="rounded-md border border-border bg-surface p-3.5">
+      <div className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">{label}</div>
+      <div className={`tnum mt-1.5 text-[22px] font-medium leading-none tracking-[-0.02em] ${color}`}>{value}</div>
       {sub && <div className="mt-1.5 text-[12px] text-fg-3">{sub}</div>}
     </div>
   );
@@ -289,8 +293,8 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border-strong bg-surface px-6 py-14 text-center">
-      <p className="text-[14px] font-medium text-fg">{title}</p>
+    <div className="flex flex-col items-center justify-center rounded-md border border-dashed border-border-strong bg-surface px-6 py-16 text-center">
+      <p className="display text-[19px] text-fg">{title}</p>
       {description && <p className="mt-1 max-w-sm text-[13px] text-fg-2">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
@@ -317,7 +321,7 @@ export function Table({ children, className = "" }: { children: ReactNode; class
   return (
     // overflow-x-auto, not hidden: a wide table should scroll rather than silently
     // clip its last columns on a narrow screen.
-    <div className={`overflow-x-auto rounded-lg border border-border bg-surface shadow-sm ${className}`}>
+    <div className={`overflow-x-auto rounded-md border border-border bg-surface ${className}`}>
       <table className="w-full border-collapse text-[13px]">{children}</table>
     </div>
   );
@@ -327,7 +331,7 @@ export function Th({ children, className = "", align = "left" }: { children?: Re
   return (
     <th
       scope="col"
-      className={`h-9 border-b border-border bg-surface-2/60 px-3 text-[12px] font-medium text-fg-3 ${
+      className={`h-9 border-b border-border bg-surface-2/50 px-3 text-[11px] font-medium uppercase tracking-[0.06em] text-fg-3 ${
         align === "right" ? "text-right" : "text-left"
       } ${className}`}
     >
@@ -338,7 +342,7 @@ export function Th({ children, className = "", align = "left" }: { children?: Re
 
 export function Td({ children, className = "", align = "left" }: { children?: ReactNode; className?: string; align?: "left" | "right" }) {
   return (
-    <td className={`h-11 border-b border-border px-3 align-middle last:border-b-0 ${align === "right" ? "text-right" : ""} ${className}`}>
+    <td className={`h-12 border-b border-border px-3 align-middle last:border-b-0 ${align === "right" ? "text-right" : ""} ${className}`}>
       {children}
     </td>
   );

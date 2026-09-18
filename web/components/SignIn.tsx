@@ -56,7 +56,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (token: string) => void }) 
           <Logo />
         </div>
         <Card>
-          <h1 className="text-[16px] font-semibold text-fg">Sign in</h1>
+          <h1 className="display text-[21px] text-fg">Sign in</h1>
           <form onSubmit={signIn} className="mt-4 space-y-4">
             <Field label="Email" htmlFor="signin-email">
               <Input

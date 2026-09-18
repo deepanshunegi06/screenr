@@ -1,49 +1,64 @@
 @import "tailwindcss";
 
+/*
+ * Ink on paper.
+ *
+ * This product's claim is that every score points at something the candidate
+ * actually said, so the spoken word is the material and everything else is
+ * apparatus around it: quotes are set in a reading serif at a size you would
+ * actually read, and the interface around them is small, quiet and squared off.
+ *
+ * Two consequences run through the whole sheet. Surfaces are paper-warm rather
+ * than the usual cool grey, and separation is done with hairlines instead of
+ * shadows -- a document does not float.
+ */
+
 @theme {
-  /* Surfaces */
-  --color-bg: #f6f6f7;
+  /* Surfaces: warm, low-chroma paper. */
+  --color-bg: #f7f6f3;
   --color-surface: #ffffff;
-  --color-surface-2: #f1f1f3;
-  --color-surface-3: #e9e9ec;
+  --color-surface-2: #f1efea;
+  --color-surface-3: #e7e4dd;
 
-  /* Borders */
-  --color-border: #e3e3e7;
-  --color-border-strong: #cfcfd5;
+  --color-border: #e3e0d9;
+  --color-border-strong: #c7c2b7;
 
-  /* Text */
-  --color-fg: #17171a;
-  --color-fg-2: #4f4f57;
-  --color-fg-3: #86868e;
-  --color-fg-4: #b1b1b8;
+  /* Ink. Warm near-black, never pure #000. */
+  --color-fg: #1a1814;
+  --color-fg-2: #55504a;
+  --color-fg-3: #867f74;
+  --color-fg-4: #b2ab9f;
 
-  /* Accent */
-  --color-accent: #2f5fe0;
-  --color-accent-hover: #264dbd;
-  --color-accent-soft: #eaf0fd;
-  --color-accent-fg: #1e3f9c;
+  /* One accent: ultramarine, the colour of a pen. Used on marks, links and
+     focus -- never as decoration. */
+  --color-accent: #2c4ba0;
+  --color-accent-hover: #233c82;
+  --color-accent-soft: #e9edf8;
+  --color-accent-fg: #223c80;
 
-  /* Semantic */
-  --color-ok: #1b8a4a;
-  --color-ok-soft: #e6f5ec;
-  --color-ok-fg: #146536;
-  --color-warn: #b7791f;
-  --color-warn-soft: #fbf3e3;
-  --color-warn-fg: #7f5312;
-  --color-bad: #c53030;
-  --color-bad-soft: #fcebeb;
-  --color-bad-fg: #8f2020;
+  /* Verdict colours, desaturated to sit on paper. */
+  --color-ok: #2c6b47;
+  --color-ok-soft: #e7f0e9;
+  --color-ok-fg: #1f5034;
+  --color-warn: #8e5f12;
+  --color-warn-soft: #f7eedd;
+  --color-warn-fg: #6b460b;
+  --color-bad: #a33228;
+  --color-bad-soft: #f8e9e7;
+  --color-bad-fg: #7c2319;
 
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-newsreader), Georgia, "Times New Roman", serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
 
-  --shadow-sm: 0 1px 2px rgba(23, 23, 26, 0.06);
-  --shadow-md: 0 4px 12px rgba(23, 23, 26, 0.08), 0 1px 3px rgba(23, 23, 26, 0.06);
-  --shadow-lg: 0 12px 32px rgba(23, 23, 26, 0.12), 0 2px 6px rgba(23, 23, 26, 0.08);
+  /* Barely there. Elevation is for things that genuinely float: dialogs. */
+  --shadow-sm: 0 1px 1px rgba(26, 24, 20, 0.04);
+  --shadow-md: 0 2px 8px rgba(26, 24, 20, 0.07);
+  --shadow-lg: 0 16px 48px rgba(26, 24, 20, 0.16), 0 2px 8px rgba(26, 24, 20, 0.08);
 }
 
 html {
@@ -80,6 +95,72 @@ select {
 /* Tabular numerals wherever numbers line up in columns. */
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+
+/* What someone said, set to be read rather than scanned. */
+.said {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  line-height: 1.55;
+  letter-spacing: -0.003em;
+}
+
+/* Page and section titles borrow the same serif, tightened. */
+.display {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+/*
+ * The time gutter.
+ *
+ * Every fact in an interview record has a second offset attached: the quote,
+ * the follow-up, the moment a warning fired. Hanging them all off one hairline
+ * axis is the one structural idea in this interface, and it is the data's own
+ * shape rather than decoration.
+ */
+.gutter {
+  position: relative;
+  padding-left: 68px;
+}
+
+/* The axis. It runs the full height of whatever it wraps, so a transcript reads
+   as one continuous record rather than a stack of separate rows. */
+.gutter::before {
+  content: "";
+  position: absolute;
+  left: 52px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border);
+}
+
+/* Timecodes hang in the margin, outside the text column. Offsets are negative
+   because each row sits inside the container's 68px of padding. */
+.gutter-at {
+  position: absolute;
+  left: -68px;
+  width: 44px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-fg-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A mark on the axis: this is the moment something was recorded. */
+.gutter-mark::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
 }
 
 /* Skeleton shimmer for loading states. */

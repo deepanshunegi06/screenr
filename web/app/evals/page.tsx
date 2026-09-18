@@ -119,7 +119,7 @@ function RunCard({ run }: { run: EvalRun }) {
         </div>
       </div>
 
-      <div className="mt-4 text-[12px] font-medium text-fg-2">Tool sequence</div>
+      <div className="mt-4 text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">Tool sequence</div>
       <div className="mt-1.5 flex flex-wrap gap-1">
         {run.toolSequence.length === 0 && <span className="text-[12px] text-fg-3">none</span>}
         {run.toolSequence.map((t, i) => (
@@ -141,7 +141,7 @@ function RunCard({ run }: { run: EvalRun }) {
         ))}
       </div>
 
-      <div className="mt-4 text-[12px] font-medium text-fg-2">Checks</div>
+      <div className="mt-4 text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">Checks</div>
       <ul className="mt-1.5 space-y-1">
         {run.checks.map((c) => (
           <li key={c.name} className="flex items-baseline gap-2 text-[13px]" title={c.detail}>

@@ -62,7 +62,7 @@ export function Wrapping({ done, removed }: { done: boolean; removed?: boolean }
         </span>
       </div>
 
-      <h1 className="mt-6 text-[18px] font-semibold text-fg" role="status">
+      <h1 className="display mt-6 text-[24px] text-fg" role="status">
         {done ? "All done" : "Wrapping up"}
       </h1>
       <p className="mt-1.5 max-w-sm text-[14px] text-fg-2">

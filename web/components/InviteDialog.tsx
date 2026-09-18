@@ -239,7 +239,7 @@ function SingleInvite({
         </div>
 
         <div>
-          <span className="mb-1.5 block text-[12px] font-medium text-fg-2">Résumé</span>
+          <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">Résumé</span>
           {pasting ? (
             <>
               <Textarea

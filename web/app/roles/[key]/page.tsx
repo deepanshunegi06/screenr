@@ -69,13 +69,13 @@ export default function RolePage({ params }: { params: Promise<{ key: string }> 
                     <Badge tone="accent">Scored from the whole conversation</Badge>
                   )}
                 </div>
-                <div className="mt-2 text-[12px] font-medium text-fg-2">What a strong answer contains</div>
+                <div className="mt-2 text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">What a strong answer contains</div>
                 <p className="mt-1 text-[14px] leading-relaxed text-fg">{s.what_good_looks_like}</p>
               </Card>
             ))}
           </div>
           <Card className="lg:sticky lg:top-4 lg:self-start">
-            <div className="text-[12px] font-medium text-fg-2">Scoring anchors</div>
+            <div className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-3">Scoring anchors</div>
             <p className="mt-1 text-[12px] text-fg-3">Same for every skill. The agent quotes the answer it scored.</p>
             <dl className="mt-3 space-y-2">
               {ANCHORS.map(([n, text]) => (
