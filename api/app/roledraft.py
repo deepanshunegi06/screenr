@@ -5,23 +5,28 @@ in the specific voice the interviewer needs: concrete, checkable, about things a
 candidate either did or did not do. That is the tedious part of the job and the
 part a model is genuinely good at.
 
-What comes back is a draft. Nothing is saved until a person has read it, because
-a rubric decides what every candidate for that role gets asked.
+It is drafted by the same model that runs the interviews, through `brain.py`, so
+the rubric is written in the voice of whoever will be reading it. What comes back
+is a draft: nothing is saved until a person has read it, because a rubric decides
+what every candidate for that role gets asked.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-
-from .llm import build_llm
+from .brain import think_json
 from .roles import MAX_SKILLS, slugify
 
-PROMPT = """You are helping a recruiter turn a job description into an interview rubric.
+PROMPT = """You turn a job description into an interview rubric.
 
-Return 4 or 5 skills. For each, write `what_good_looks_like`: two or three
-sentences naming what a strong answer contains.
+Reply with JSON and nothing else -- no prose before it, no code fences:
 
-Write it exactly like these, which are from a working rubric:
+{"title": "the role title", "skills": [
+  {"name": "...", "what_good_looks_like": "...", "weight": 1.0, "cross_cutting": false}
+]}
+
+Return 4 or 5 skills. `what_good_looks_like` is two or three sentences naming
+what a strong answer contains. Write them exactly like these, which come from a
+working rubric:
 
   "Names the database and framework they personally chose and gives the reason
   that decided it. Describes one thing that broke and how they diagnosed it, not
@@ -33,7 +38,7 @@ Write it exactly like these, which are from a working rubric:
 
 Notice the shape:
 - Third person about the candidate -- "Names...", "Describes...", "Explains...".
-  Never "You describe" -- this text is read by the interviewer, not the candidate.
+  Never "You describe": this text is read by the interviewer, not the candidate.
 - Checkable things: a decision and the reason for it, a failure and how they
   found it, a shape they can draw. Never adjectives like "solid understanding".
 
@@ -46,51 +51,44 @@ Hard rules:
 - Describe what the candidate did, never what the company offers.
 - The title is the job title as a candidate would say it. Not "rubric", not
   "interview", not "assessment" -- just the role.
-- One skill may be cross_cutting: judged from how they talk across the whole
-  conversation rather than from a question of its own. Communication is the usual
-  one. Give it weight 0.5. Every other skill is 1.0 unless the description is
-  explicit that one thing matters more.
-
-Job description:
----
-{jd}
----"""
+- One skill may have cross_cutting true: judged from how they talk across the
+  whole conversation rather than from a question of its own. Communication is the
+  usual one, and it takes weight 0.5. Every other skill is weight 1.0 unless the
+  description is explicit that one thing matters more."""
 
 
-class DraftSkill(BaseModel):
-    name: str = Field(description="Short skill name, under 60 characters")
-    what_good_looks_like: str = Field(description="Two or three concrete, checkable sentences")
-    weight: float = Field(default=1.0, description="1.0 normally, 0.5 for a cross-cutting skill")
-    cross_cutting: bool = Field(default=False)
+async def draft_rubric(job_description: str) -> dict:
+    """Raises ValueError with something worth showing when the model is unreachable."""
+    draft = await think_json(PROMPT, job_description.strip()[:8000])
 
-
-class DraftRubric(BaseModel):
-    title: str = Field(description="The role title, as a person would say it")
-    skills: list[DraftSkill]
-
-
-def draft_rubric(job_description: str) -> dict:
-    """Raises ValueError with something worth showing when the provider is down."""
-    try:
-        model = build_llm(temperature=0.2).with_structured_output(DraftRubric)
-        draft = model.invoke(PROMPT.format(jd=job_description.strip()[:8000]))
-    except Exception as exc:
-        raise ValueError(f"Couldn't draft from that: {type(exc).__name__}. Add the skills by hand.") from exc
-
-    if not draft or not draft.skills:
+    title = str(draft.get("title") or "").strip()
+    skills = draft.get("skills")
+    if not title or not isinstance(skills, list) or not skills:
         raise ValueError("Nothing usable came back. Add the skills by hand.")
 
-    return {
-        "key": slugify(draft.title),
-        "title": draft.title[:80],
-        "skills": [
+    out = []
+    for skill in skills[:MAX_SKILLS]:
+        if not isinstance(skill, dict):
+            continue
+        name = " ".join(str(skill.get("name", "")).split())[:60]
+        good = " ".join(str(skill.get("what_good_looks_like", "")).split())
+        if not name or not good:
+            continue
+        cross = bool(skill.get("cross_cutting", False))
+        try:
+            weight = float(skill.get("weight", 1.0))
+        except (TypeError, ValueError):
+            weight = 1.0
+        out.append(
             {
-                "key": slugify(s.name),
-                "name": s.name[:60],
-                "weight": 0.5 if s.cross_cutting else max(0.1, min(3.0, s.weight)),
-                "cross_cutting": s.cross_cutting,
-                "what_good_looks_like": " ".join(s.what_good_looks_like.split()),
+                "key": slugify(name),
+                "name": name,
+                "weight": 0.5 if cross else max(0.1, min(3.0, weight)),
+                "cross_cutting": cross,
+                "what_good_looks_like": good,
             }
-            for s in draft.skills[:MAX_SKILLS]
-        ],
-    }
+        )
+
+    if not out:
+        raise ValueError("Nothing usable came back. Add the skills by hand.")
+    return {"key": slugify(title), "title": title[:80], "skills": out}

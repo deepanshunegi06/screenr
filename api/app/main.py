@@ -20,6 +20,7 @@ from .auth import (
     verify_login,
 )
 from .config import get_settings
+from .mail import send_invite
 from .relay import router as relay_router
 from .resumes import extract, guess_name
 from .roledraft import draft_rubric
@@ -215,6 +216,38 @@ def create_sessions(body: BulkInviteRequest, _: str = Depends(current_recruiter)
             }
         )
     return {"created": created, "failed": failed}
+
+
+class EmailRequest(BaseModel):
+    """An explicit origin wins: the API may be reached through a tunnel whose
+    URL the server was never told about."""
+
+    origin: str = Field("", max_length=200)
+
+
+@app.post("/sessions/{session_id}/email")
+async def email_invite(
+    session_id: str, body: EmailRequest, _: str = Depends(current_recruiter)
+) -> dict:
+    """Put the invite in the candidate's inbox rather than the recruiter's clipboard."""
+    session = store.get(session_id)
+    if session is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such interview")
+
+    settings = get_settings()
+    origin = (body.origin or settings.web_origin).rstrip("/")
+    link = f"{origin}/interview/{issue_candidate_token(session.id)}"
+    try:
+        message_id = await send_invite(
+            to=session.candidate_email,
+            candidate=session.candidate_name,
+            role=session.ctx.role_title,
+            minutes=max(1, settings.max_interview_seconds // 60),
+            link=link,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return {"sent": session.candidate_email, "messageId": message_id}
 
 
 @app.get("/sessions/{session_id}/evidence/{name}")
@@ -430,7 +463,7 @@ class DraftRequest(BaseModel):
 
 
 @app.post("/roles/draft")
-def draft_role(body: DraftRequest, _: str = Depends(current_recruiter)) -> dict:
+async def draft_role(body: DraftRequest, _: str = Depends(current_recruiter)) -> dict:
     """Turn a pasted job description into a first draft of a rubric.
 
     A draft, not a role: nothing is saved until a person has read it. Writing
@@ -438,7 +471,7 @@ def draft_role(body: DraftRequest, _: str = Depends(current_recruiter)) -> dict:
     part of adding a role, and it is the part a model is good at.
     """
     try:
-        return draft_rubric(body.jobDescription)
+        return await draft_rubric(body.jobDescription)
     except ValueError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 

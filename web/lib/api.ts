@@ -297,6 +297,13 @@ export const api = {
   compare: (rubric: string) =>
     request<Comparison>(`/compare?rubric=${encodeURIComponent(rubric)}`, {}, true),
 
+  emailInvite: (id: string) =>
+    request<{ sent: string; messageId: string }>(
+      `/sessions/${id}/email`,
+      { method: "POST", body: JSON.stringify({ origin: window.location.origin }) },
+      true,
+    ),
+
   reissueInvite: (id: string) =>
     request<{ inviteToken: string; sessionId: string }>(`/sessions/${id}/invite`, {}, true),
 

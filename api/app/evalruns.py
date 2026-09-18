@@ -1,12 +1,16 @@
 """Running the evals from the dashboard instead of from a terminal.
 
 A committed report proves nothing on its own -- a reader has to take it on faith
-that the file came from the code. A button that re-runs the four scripted
-candidates in front of them and rewrites the file settles that in ninety
-seconds.
+that the file came from the code. A button that re-runs the scripted candidates
+in front of them and rewrites the file settles that in about two minutes.
 
-Runs happen on a worker thread because a full pass is a few dozen LLM calls, far
-too long to hold a request open. The page polls for progress.
+The run goes through the real Deepgram agent, not the text stand-in: a page that
+claims "these are the real tool sequences" should mean the stack a candidate
+actually talks to. It costs agent-hours, which is the right price for a claim
+that has to hold up.
+
+Runs happen on a worker thread with their own event loop, because a full pass
+holds six sockets open for a couple of minutes. The page polls for progress.
 """
 
 from __future__ import annotations
@@ -23,9 +27,8 @@ from .config import get_settings
 _LOCK = threading.Lock()
 _STATE: dict = {"running": False, "done": 0, "total": 0, "startedAt": None, "error": None}
 
-# One persona is a handful of LLM calls; the whole set takes a minute or two on
-# a fast provider and longer on a rate-limited free tier.
-MAX_TURNS = 14
+# All six interviews run at once, so a sweep takes as long as the longest one.
+MAX_TURNS = 16
 
 
 # Providers bury the useful sentence inside a dict they str() into the exception.
@@ -41,8 +44,7 @@ def _readable(exc: Exception) -> str:
 
 
 def _key_present() -> bool:
-    s = get_settings()
-    return bool(s.groq_api_key or s.openai_api_key or s.google_api_key or s.anthropic_api_key)
+    return bool(get_settings().deepgram_api_key)
 
 
 def status() -> dict:
@@ -53,7 +55,7 @@ def status() -> dict:
 def start(results_path: Path) -> None:
     """Kick off a run. Raises ValueError with something worth showing a person."""
     if not _key_present():
-        raise ValueError("No LLM key is configured on the server, so the evals can't run here.")
+        raise ValueError("DEEPGRAM_API_KEY is not set on the server, so the evals can't run here.")
     with _LOCK:
         if _STATE["running"]:
             raise ValueError("A run is already in progress.")
@@ -65,31 +67,43 @@ def start(results_path: Path) -> None:
 
 def _work(results_path: Path) -> None:
     try:
-        from evals import personas as p
-        from evals.runner import build_report, run_interview
+        import asyncio
 
+        from evals import personas as p
+        from evals.runner import build_report
+        from evals.voice_runner import clear_stray_sessions, run_voice_interview
+
+        clear_stray_sessions()
         with _LOCK:
             _STATE["total"] = len(p.ALL)
 
-        runs = []
-        errors: list[dict] = []
-        for persona in p.ALL:
-            try:
-                runs.append(run_interview(persona, max_turns=MAX_TURNS))
-            except Exception as exc:
-                # A rate limit on persona three must not throw away personas one
-                # and two. The failure is reported rather than hidden, because a
-                # report showing four of six with no explanation looks doctored.
-                errors.append({"persona": persona.name, "reason": _readable(exc)})
-            with _LOCK:
-                _STATE["done"] += 1
+        async def sweep() -> tuple[list, list[dict]]:
+            done_runs, failures = [], []
+
+            async def one(persona):
+                try:
+                    return await run_voice_interview(persona, max_turns=MAX_TURNS)
+                except Exception as exc:
+                    # One socket failing must not throw away the other five. The
+                    # failure is reported rather than hidden, because a report
+                    # showing four of six with no explanation looks doctored.
+                    return {"persona": persona.name, "reason": _readable(exc)}
+                finally:
+                    with _LOCK:
+                        _STATE["done"] += 1
+
+            for result in await asyncio.gather(*(one(persona) for persona in p.ALL)):
+                (failures if isinstance(result, dict) else done_runs).append(result)
+            return done_runs, failures
+
+        runs, errors = asyncio.run(sweep())
 
         if runs:
             settings = get_settings()
             report = build_report(
                 runs,
-                model=settings.llm_model,
-                provider=settings.llm_provider,
+                model=settings.voice_think_model,
+                provider=f"deepgram / {settings.voice_think_provider}",
                 ran_at=datetime.now(UTC).isoformat(),
             )
             report["errors"] = errors

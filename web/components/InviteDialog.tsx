@@ -135,6 +135,9 @@ function SingleInvite({
   const [resume, setResume] = useState("");
   const [pasting, setPasting] = useState(false);
   const [link, setLink] = useState("");
+  const [sessionId, setSessionId] = useState("");
+  const [mailed, setMailed] = useState("");
+  const [mailing, setMailing] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -163,11 +166,25 @@ function SingleInvite({
         resumeText: resume.trim(),
       });
       setLink(`${window.location.origin}/interview/${result.inviteToken}`);
+      setSessionId(result.sessionId);
       onCreated();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't create the invite.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function emailIt() {
+    setMailing(true);
+    setError("");
+    try {
+      const sent = await api.emailInvite(sessionId);
+      setMailed(sent.sent);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't send the email.");
+    } finally {
+      setMailing(false);
     }
   }
 
@@ -184,9 +201,11 @@ function SingleInvite({
   if (link) {
     return (
       <div className="p-5">
-        <h2 className="text-[15px] font-semibold">Invite ready</h2>
+        <h2 className="display text-[19px]">Invite ready</h2>
         <p className="mt-1 text-[13px] text-fg-2">
-          Send this to {email}. Opening it signs them straight into their interview.
+          {mailed
+            ? `Sent to ${mailed}. Opening it signs them straight into their interview.`
+            : `Email it to ${email}, or send the link yourself.`}
         </p>
         <div className="mt-4 flex gap-2">
           <input
@@ -198,13 +217,26 @@ function SingleInvite({
           />
           <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        {error && (
+          <p role="alert" className="mt-3 text-[12px] text-bad">
+            {error}
+          </p>
+        )}
+
+        <div className="mt-5 flex items-center justify-between gap-2">
           <a href={link} target="_blank" rel="noreferrer">
             <Button variant="ghost">Preview as candidate</Button>
           </a>
-          <Button variant="primary" onClick={onClose}>
-            Done
-          </Button>
+          <div className="flex gap-2">
+            {!mailed && (
+              <Button onClick={emailIt} loading={mailing}>
+                Email it to them
+              </Button>
+            )}
+            <Button variant="primary" onClick={onClose}>
+              Done
+            </Button>
+          </div>
         </div>
       </div>
     );

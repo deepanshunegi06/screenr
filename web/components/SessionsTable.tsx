@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { Badge, Button, EmptyState, Skeleton, Table, Td, Th, Verdict } from "@/components/ui";
-import { api, relativeTime, type Decision, type SessionRow } from "@/lib/api";
+import { ApiError, api, relativeTime, type Decision, type SessionRow } from "@/lib/api";
 
 export type Filter = "all" | "review" | "live" | "decided";
 
@@ -60,6 +60,8 @@ export function SessionsTable({
   const [cursor, setCursor] = useState(-1);
   const [menu, setMenu] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [mailed, setMailed] = useState<string | null>(null);
+  const [problem, setProblem] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
@@ -102,6 +104,22 @@ export function SessionsTable({
     } finally {
       setBusy(null);
       setMenu(null);
+    }
+  }
+
+  async function emailInvite(row: SessionRow) {
+    setBusy(row.id);
+    setMenu(null);
+    try {
+      await api.emailInvite(row.id);
+      setMailed(row.id);
+      setTimeout(() => setMailed(null), 2500);
+    } catch (err) {
+      // A refused send is ordinary -- an unverified domain, usually -- and the
+      // provider's reason is the only useful thing to show.
+      setProblem(err instanceof ApiError ? err.message : "Couldn't send the email.");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -192,7 +210,18 @@ export function SessionsTable({
   }
 
   return (
-    <div ref={tableRef} tabIndex={0} className="overflow-x-auto rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent">
+    <div ref={tableRef} tabIndex={0} className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      {problem && (
+        <div
+          role="alert"
+          className="mb-3 flex items-start justify-between gap-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[13px] text-warn-fg"
+        >
+          <span>{problem}</span>
+          <Button size="sm" variant="ghost" onClick={() => setProblem("")}>
+            Dismiss
+          </Button>
+        </div>
+      )}
       <Table>
         <thead>
           <tr>
@@ -264,6 +293,11 @@ export function SessionsTable({
                       <MenuItem onClick={() => copyLink(row)}>
                         {copied === row.id ? "Copied" : "Copy invite link"}
                       </MenuItem>
+                      {!row.started && (
+                        <MenuItem onClick={() => emailInvite(row)}>
+                          {mailed === row.id ? "Sent" : "Email the invite"}
+                        </MenuItem>
+                      )}
                       {row.started && !row.finished && (
                         <MenuItem onClick={() => closeSession(row)}>Close interview</MenuItem>
                       )}

@@ -52,9 +52,14 @@ in an editor.
 
 For the person doing the hiring: drop a PDF or Word résumé on the invite and the
 claims come out of it; paste a column of thirty addresses and get thirty links
-back, with a reason next to any row that failed; and `/compare` puts everyone who
+back, with a reason next to any row that failed; send the invite as an email
+rather than copying a link into your own client; and `/compare` puts everyone who
 interviewed for a role under the same skill columns, because the real question is
 which of them to take forward.
+
+One model does all the thinking. Drafting a rubric, running an interview and
+re-running the evals all go through `claude-sonnet-5` on Deepgram's socket, so
+what the product writes sounds like what candidates hear.
 
 ## Rules that are enforced in code, not asked for in a prompt
 
@@ -72,7 +77,7 @@ which of them to take forward.
 | | Voice interview | Typed fallback, CLI, evals |
 |---|---|---|
 | Driver | Deepgram Voice Agent (`deepgram_driver.py`, `relay.py`) | LangGraph (`agent/graph.py`) |
-| Reasoning model | `claude-sonnet-5` via Deepgram's managed think provider | Groq (`openai/gpt-oss-120b`) via `llm.py` |
+| Reasoning model | `claude-sonnet-5` via Deepgram's managed think provider | the same model via `brain.py`, or `llm.py` for offline work |
 | Speech | Deepgram Flux STT and TTS | none |
 | Tool execution | client-side function calling → our `tools.py` | LangGraph `ToolNode` → the same `tools.py` |
 | Memory | Deepgram conversation history, replayed from our transcript on reconnect | `MemorySaver` checkpointer |
@@ -101,7 +106,8 @@ cp env.example .env         # then fill in the keys below
 |---|---|
 | `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID` | voice interviews and per-interview cost |
 | `VOICE_THINK_PROVIDER`, `VOICE_THINK_MODEL` | the model Deepgram runs (`anthropic` / `claude-sonnet-5`) |
-| `GROQ_API_KEY` *or* `GOOGLE_API_KEY` | the CLI and the evals. Both are free; Gemini's daily quota is the larger one, so `LLM_PROVIDER=gemini` with `LLM_MODEL=gemini-2.5-flash` is the path of least resistance |
+| `RESEND_API_KEY`, `MAIL_FROM`, `WEB_ORIGIN` | emailing invites to candidates |
+| `GROQ_API_KEY` *or* `GOOGLE_API_KEY` | the terminal interviewer and the free text eval sweep only. Everything the product does at runtime thinks through Deepgram |
 | `RECRUITER_EMAIL`, `RECRUITER_PASSWORD`, `JWT_SECRET` | the single recruiter account |
 | `DEMO_MODE=true` | a one-click demo sign-in that never exposes the password |
 | `CORS_ORIGINS` | the frontend origin(s) |
@@ -150,10 +156,18 @@ most turns).
 ```
 
 A committed report is only as good as your trust in whoever committed it, so
-**Run them now** on the `/evals` page re-runs every persona against the live
-agent and rewrites that file while you watch. If the provider is rate limited
-and nothing runs, the previous report is kept rather than replaced with an
-empty one, and the page says so.
+**Run them now** on the `/evals` page re-runs every persona and rewrites that
+file while you watch. It goes through the real Deepgram socket, not the text
+stand-in: six interviews at once, about two minutes, billed in agent-hours.
+A page claiming "these are the real tool sequences" should mean the stack a
+candidate actually talks to.
+
+```bash
+.venv/Scripts/python -m app.cli --json evals/results/latest.json --voice
+```
+
+If the provider is unreachable and nothing runs, the previous report is kept
+rather than replaced with an empty one, and the page says so.
 
 ## Decisions
 

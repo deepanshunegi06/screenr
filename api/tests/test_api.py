@@ -129,7 +129,7 @@ def test_running_evals_needs_a_key(auth):
     """Without a configured provider the button says so, rather than hanging."""
     res = client.post("/evals/run", headers=auth)
     assert res.status_code == 409
-    assert "LLM key" in res.json()["detail"]
+    assert "DEEPGRAM_API_KEY" in res.json()["detail"]
     assert client.get("/evals", headers=auth).json()["run"]["running"] is False
 
 
@@ -322,15 +322,17 @@ def test_a_failed_eval_run_keeps_the_last_report(tmp_path, monkeypatch):
     import time
 
     from app import evalruns
-    from evals import runner
+    from evals import voice_runner
 
     report = tmp_path / "latest.json"
     report.write_text('{"summary": {"total": 4, "passed": 2}}', encoding="utf-8")
 
+    async def unreachable(*a, **k):
+        raise RuntimeError("429 rate limited")
+
     monkeypatch.setattr(evalruns, "_key_present", lambda: True)
-    monkeypatch.setattr(
-        runner, "run_interview", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("429 rate limited"))
-    )
+    monkeypatch.setattr(voice_runner, "clear_stray_sessions", lambda: 0)
+    monkeypatch.setattr(voice_runner, "run_voice_interview", unreachable)
 
     evalruns.start(report)
     for _ in range(50):
@@ -438,3 +440,50 @@ def test_the_cli_does_not_wipe_a_report_when_nothing_ran(tmp_path, monkeypatch, 
     assert cli.run_personas(["all"], str(report)) == 1
     assert "unchanged" in capsys.readouterr().out
     assert json.loads(report.read_text())["summary"]["passed"] == 2
+
+
+def test_emailing_an_invite_reports_the_provider_reason(auth, session, monkeypatch):
+    """A refused send is ordinary -- an unverified domain -- so the reason has to
+    reach the recruiter rather than being swallowed into a generic 502."""
+    from app import mail
+
+    sent = {}
+
+    async def fake_send(**kwargs):
+        sent.update(kwargs)
+        return "msg_123"
+
+    monkeypatch.setattr(mail, "send_invite", fake_send)
+    monkeypatch.setattr(main, "send_invite", fake_send)
+
+    res = client.post(
+        f"/sessions/{session['sessionId']}/email",
+        json={"origin": "https://screenr.test"},
+        headers=auth,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["sent"] == "cand@test.edu"
+    assert sent["to"] == "cand@test.edu"
+    assert sent["link"].startswith("https://screenr.test/interview/")
+    assert sent["role"] == "Backend engineering intern"
+
+    async def refuse(**kwargs):
+        raise ValueError("verify a domain at resend.com/domains")
+
+    monkeypatch.setattr(main, "send_invite", refuse)
+    res = client.post(f"/sessions/{session['sessionId']}/email", json={}, headers=auth)
+    assert res.status_code == 502
+    assert "verify a domain" in res.json()["detail"]
+
+    assert client.post("/sessions/nope/email", json={}, headers=auth).status_code == 404
+
+
+def test_the_invite_email_says_what_the_candidate_needs(auth):
+    from app.mail import _html, _text
+
+    body = _text("Aditya Rao", "Backend engineering intern", 20, "https://x/interview/tok")
+    assert body.startswith("Hi Aditya,")
+    assert "https://x/interview/tok" in body
+    # The three things that change how a candidate prepares.
+    assert "microphone" in body and "full screen" in body and "I don't know" in body
+    assert "https://x/interview/tok" in _html("", "A role", 20, "https://x/interview/tok")

@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # Needed to read per-session usage back out of Deepgram.
     deepgram_project_id: str = ""
 
+    # Sending invites. Resend will only deliver to the account owner until a
+    # domain is verified, so a send can legitimately fail on a working key.
+    resend_api_key: str = ""
+    mail_from: str = "screenr <onboarding@resend.dev>"
+    # Where an invite link points. The API cannot know the web origin otherwise.
+    web_origin: str = "http://localhost:3000"
+
     # Single hardcoded recruiter for v1. See docs/adr/004-no-auth-provider.md.
     recruiter_email: str = "recruiter@screenr.local"
     recruiter_password: str = "changeme"
