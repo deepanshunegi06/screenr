@@ -22,8 +22,8 @@ should look.
 ## Decision
 
 Two sources, both in the candidate's browser: tab or window switches of three
-seconds or more, and — only if the candidate opts in — face presence from
-MediaPipe's short-range detector running on their device.
+seconds or more, and — only if the candidate opts in — face presence and head
+position from MediaPipe's face landmarker running on their device.
 
 Enforced boundaries:
 
@@ -40,14 +40,35 @@ Enforced boundaries:
 5. No signal, alone or combined, rejects anyone. They surface next to the
    transcript, with a timestamp, for a human to interpret.
 
+## On gaze, and what "looking away" is allowed to mean
+
+Retinal tracking is not possible from a webcam — it needs infrared hardware
+pointed into the eye. What the landmarker does give is iris position, and from it
+a gaze estimate carrying roughly 5-10 degrees of error uncalibrated, which is
+wider than a laptop screen subtends. It cannot distinguish reading a second
+monitor from glancing at the edge of this one.
+
+So head rotation carries the signal and iris offset only corroborates it, both
+measured against a baseline taken from the candidate's own first few seconds —
+everyone sits at a different angle to their webcam, and an absolute threshold
+would flag posture. Thresholds are wide (28 degrees of yaw) and an event must
+persist six seconds. A false note on someone's hiring record is worse than a
+missed one.
+
+The output is a duration: "looked away for eleven seconds at 6:42". Never a
+percentage, never a rate, never a verdict.
+
 ## Signals deliberately not collected
 
-Gaze direction, emotion, attentiveness, stress, speech rate, filler-word counts,
-and any aggregate "suspicion score". MediaPipe offers landmarks that would make
-gaze estimation easy; it is left out on purpose. Uncalibrated gaze cannot tell
-reading a second monitor from thinking, and every one of these punishes
-neurodivergent and disabled candidates for how they behave rather than what they
-said. None would improve a hiring decision.
+Emotion, stress, attentiveness, speech rate, filler-word counts, and any
+aggregate "suspicion score" or attention percentage. The same landmarks would
+make several of these easy to compute. They are left out because they measure how
+a person behaves rather than what they said, and they fall hardest on
+neurodivergent and disabled candidates. None would improve a hiring decision.
+
+No browser-side proctoring survives a phone propped beside the laptop. Anything
+claiming to prevent cheating is overselling; these signals only narrow where a
+human should look.
 
 ## Consequences
 

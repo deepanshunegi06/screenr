@@ -1,74 +1,138 @@
 /**
- * Camera presence checks, entirely on the candidate's device.
+ * Camera presence and attention checks, entirely on the candidate's device.
  *
- * MediaPipe's face detector runs in this tab against a hidden <video>. Frames are
- * never uploaded, never stored, and never reach our server — only three kinds of
- * event, each with the time it happened:
+ * MediaPipe's face landmarker runs in this tab against a hidden <video>. Frames
+ * are never uploaded, never stored, and never reach our server — only events,
+ * each with the time it happened:
  *
  *   no_face          nobody in frame for a sustained stretch
  *   multiple_faces   more than one person in frame
+ *   looking_away     head turned or eyes off-screen for a sustained stretch
  *   camera_lost      the track ended mid-interview
  *
- * What it deliberately does not do: gaze direction, emotion, attention scoring,
- * or any aggregate "suspicion" number. Those are unreliable, and they punish
- * people for thinking with their eyes off the screen. These events are notes for
- * a human reading the transcript, never inputs to a score
- * (see docs/adr/005-proctoring-never-touches-scoring.md).
+ * On what "looking away" can and cannot mean
+ * ------------------------------------------
+ * Retinal imaging is not possible from a webcam; it needs infrared hardware
+ * pointed into the eye. What is available is iris position among the landmarks,
+ * which gives a gaze estimate with roughly 5-10 degrees of error uncalibrated —
+ * wider than a laptop screen subtends. It cannot distinguish reading a second
+ * monitor from glancing at the edge of this one.
+ *
+ * Head pose is the reliable signal, so it carries most of the weight here and
+ * iris offset only corroborates it. Both are measured against a baseline taken
+ * from this candidate's own first few seconds, because everyone sits differently.
+ * Thresholds are deliberately generous and an event needs to persist for seconds
+ * before it is reported.
+ *
+ * What this still is: a note saying "they looked away for eleven seconds at
+ * 6:42", for a human reading the transcript. What it is not, and must never
+ * become: an attention score, an emotion reading, or an input to any judgement
+ * about the candidate. See docs/adr/005-proctoring-never-touches-scoring.md.
  */
 
-import { FilesetResolver, FaceDetector } from "@mediapipe/tasks-vision";
+import { FilesetResolver, FaceLandmarker } from "@mediapipe/tasks-vision";
 
 const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
 const MODEL =
-  "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
-/** How often to look. Once a second is plenty and keeps the main thread free
- *  for the audio pipeline, which matters far more to the interview. */
-const SAMPLE_MS = 1000;
+/** How often to look. Four times a second is enough to time an absence to the
+ *  second while leaving the main thread to the audio pipeline, which matters
+ *  more to the interview than this does. */
+const SAMPLE_MS = 250;
 
-/** An absence only counts once it has lasted. People lean out of frame to think,
- *  reach for water, or shift in a chair; none of that is worth a note. */
+/** Seconds a condition must hold before it is worth a note. People lean out of
+ *  frame to think, reach for water, and shift in a chair. */
 const ABSENCE_SECONDS = 8;
+const AWAY_SECONDS = 6;
 
 /** Don't report the same ongoing condition over and over. */
 const REPEAT_SECONDS = 60;
 
-export type ProctorEvent = { kind: "no_face" | "multiple_faces" | "camera_lost"; detail: string };
+/** Baseline: the candidate's own neutral pose, sampled while the agent delivers
+ *  its opening line — the one moment they are reliably facing the screen. */
+const CALIBRATION_SAMPLES = 20;
 
-export type ProctorHandle = {
-  stop: () => void;
+/** How far from that baseline counts as away. Head rotation does the work;
+ *  the iris term only fires on a large, sustained offset. Both are wide on
+ *  purpose — a false note on someone's hiring record is worse than a missed one. */
+const YAW_DEGREES = 28;
+const PITCH_DEGREES = 22;
+const IRIS_OFFSET = 0.22;
+
+// Landmark indices, from the MediaPipe face mesh.
+const RIGHT_EYE = { inner: 133, outer: 33, iris: 468 };
+const LEFT_EYE = { inner: 362, outer: 263, iris: 473 };
+
+export type ProctorEvent = {
+  kind: "no_face" | "multiple_faces" | "looking_away" | "camera_lost";
+  detail: string;
 };
+
+export type ProctorHandle = { stop: () => void };
+
+type Point = { x: number; y: number };
+
+/** Where the iris sits between the eye corners: 0 at the inner corner, 1 at the
+ *  outer. Taken as a ratio so it survives the candidate moving nearer or further. */
+function irisRatio(points: Point[], eye: typeof RIGHT_EYE): number | null {
+  const inner = points[eye.inner];
+  const outer = points[eye.outer];
+  const iris = points[eye.iris];
+  if (!inner || !outer || !iris) return null;
+  const span = outer.x - inner.x;
+  if (Math.abs(span) < 1e-6) return null;
+  return (iris.x - inner.x) / span;
+}
+
+/** Yaw and pitch in degrees from the 4x4 facial transformation matrix. */
+function headAngles(matrix: number[]): { yaw: number; pitch: number } {
+  const yaw = Math.atan2(matrix[8], matrix[10]) * (180 / Math.PI);
+  const pitch = Math.asin(Math.max(-1, Math.min(1, -matrix[9]))) * (180 / Math.PI);
+  return { yaw, pitch };
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
 
 export async function startProctoring(onEvent: (event: ProctorEvent) => void): Promise<ProctorHandle> {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 320, height: 240, facingMode: "user" },
+    video: { width: 480, height: 360, facingMode: "user" },
   });
 
   const video = document.createElement("video");
   video.srcObject = stream;
   video.muted = true;
   video.playsInline = true;
-  // Kept out of the layout: the candidate does not need to watch themselves, and
-  // a visible preview invites people to perform for the camera.
+  // Deliberately not shown: the candidate does not need to watch themselves, and
+  // a preview invites people to perform for the camera.
   video.style.display = "none";
   document.body.appendChild(video);
   await video.play();
 
   const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
-  const detector = await FaceDetector.createFromOptions(vision, {
+  const landmarker = await FaceLandmarker.createFromOptions(vision, {
     baseOptions: { modelAssetPath: MODEL, delegate: "GPU" },
     runningMode: "VIDEO",
-    minDetectionConfidence: 0.5,
+    // Two is enough to notice a second person without paying for more.
+    numFaces: 2,
+    outputFacialTransformationMatrixes: true,
   });
 
   let stopped = false;
   let absentSince = 0;
-  let lastReported: Record<string, number> = {};
+  let awaySince = 0;
+  const reported: Record<string, number> = {};
+
+  const calibration: { yaw: number[]; pitch: number[]; iris: number[] } = { yaw: [], pitch: [], iris: [] };
+  let baseline: { yaw: number; pitch: number; iris: number } | null = null;
 
   const report = (kind: ProctorEvent["kind"], detail: string) => {
     const now = Date.now();
-    if (lastReported[kind] && now - lastReported[kind] < REPEAT_SECONDS * 1000) return;
-    lastReported[kind] = now;
+    if (reported[kind] && now - reported[kind] < REPEAT_SECONDS * 1000) return;
+    reported[kind] = now;
     onEvent({ kind, detail });
   };
 
@@ -81,14 +145,17 @@ export async function startProctoring(onEvent: (event: ProctorEvent) => void): P
     }
     if (video.readyState < 2) return;
 
-    let faces = 0;
+    let result;
     try {
-      faces = detector.detectForVideo(video, performance.now()).detections.length;
+      result = landmarker.detectForVideo(video, performance.now());
     } catch {
       return; // a dropped frame is not an event
     }
 
+    const faces = result.faceLandmarks?.length ?? 0;
+
     if (faces === 0) {
+      awaySince = 0;
       if (!absentSince) absentSince = Date.now();
       const seconds = Math.round((Date.now() - absentSince) / 1000);
       if (seconds >= ABSENCE_SECONDS) report("no_face", `No one in frame for ${seconds}s`);
@@ -96,17 +163,60 @@ export async function startProctoring(onEvent: (event: ProctorEvent) => void): P
     }
 
     absentSince = 0;
-    if (faces > 1) report("multiple_faces", `${faces} people in frame`);
+    if (faces > 1) {
+      report("multiple_faces", `${faces} people in frame`);
+      return; // whose gaze would we even be measuring
+    }
+
+    const points = result.faceLandmarks[0] as Point[];
+    const matrix = result.facialTransformationMatrixes?.[0]?.data;
+    if (!matrix) return;
+
+    const { yaw, pitch } = headAngles(Array.from(matrix));
+    const right = irisRatio(points, RIGHT_EYE);
+    const left = irisRatio(points, LEFT_EYE);
+    const iris = right !== null && left !== null ? (right + left) / 2 : null;
+    if (iris === null) return;
+
+    // Calibrate against this candidate's own neutral pose. Everyone sits at a
+    // different angle to their webcam; an absolute threshold would flag posture.
+    if (!baseline) {
+      calibration.yaw.push(yaw);
+      calibration.pitch.push(pitch);
+      calibration.iris.push(iris);
+      if (calibration.yaw.length >= CALIBRATION_SAMPLES) {
+        baseline = {
+          yaw: median(calibration.yaw),
+          pitch: median(calibration.pitch),
+          iris: median(calibration.iris),
+        };
+      }
+      return;
+    }
+
+    const turned =
+      Math.abs(yaw - baseline.yaw) > YAW_DEGREES || Math.abs(pitch - baseline.pitch) > PITCH_DEGREES;
+    const eyesOff = Math.abs(iris - baseline.iris) > IRIS_OFFSET;
+
+    // Head rotation alone is enough; iris offset alone is not trusted, because
+    // uncalibrated gaze cannot tell a second screen from the edge of this one.
+    if (!turned && !(eyesOff && Math.abs(yaw - baseline.yaw) > YAW_DEGREES / 2)) {
+      awaySince = 0;
+      return;
+    }
+
+    if (!awaySince) awaySince = Date.now();
+    const seconds = Math.round((Date.now() - awaySince) / 1000);
+    if (seconds >= AWAY_SECONDS) report("looking_away", `Looked away from the screen for ${seconds}s`);
   }, SAMPLE_MS);
 
   return {
     stop: () => {
       stopped = true;
       clearInterval(timer);
-      detector.close();
+      landmarker.close();
       stream.getTracks().forEach((t) => t.stop());
       video.remove();
-      lastReported = {};
     },
   };
 }

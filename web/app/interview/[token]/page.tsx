@@ -188,9 +188,9 @@ function Consent({
         <span className="text-[14px] text-fg">
           Camera checks during the interview.
           <span className="mt-0.5 block text-[12px] text-fg-3">
-            Optional. Runs entirely on your device — no video is sent or stored, only notes like
-            &quot;no one in frame for 12 seconds&quot;. Declining is fine and changes nothing about
-            your scoring.
+            Optional. Face presence and head position, checked on your device — no video is sent
+            or stored, only notes like &quot;looked away for 11 seconds&quot;. Declining is fine and
+            changes nothing about your scoring.
           </span>
         </span>
       </label>

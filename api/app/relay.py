@@ -37,7 +37,7 @@ FORWARDED = {
 }
 
 # Integrity events the browser may report. Anything else is dropped.
-INTEGRITY_KINDS = {"tab_hidden", "no_face", "multiple_faces", "camera_lost"}
+INTEGRITY_KINDS = {"tab_hidden", "no_face", "multiple_faces", "looking_away", "camera_lost"}
 
 # How long the closing line gets before the socket is torn down regardless.
 END_GRACE_SECONDS = 8.0

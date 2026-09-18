@@ -34,6 +34,7 @@ const INTEGRITY_LABEL: Record<string, string> = {
   tab_hidden: "Switched away from the interview",
   no_face: "No one in frame",
   multiple_faces: "More than one person in frame",
+  looking_away: "Looked away from the screen",
   camera_lost: "Camera stopped",
 };
 
