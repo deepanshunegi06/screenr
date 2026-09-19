@@ -182,7 +182,15 @@ export function judge(
  *  on noise. */
 export class Smoother {
   private value: GazeFeatures | null = null;
-  constructor(private readonly alpha = 0.25) {}
+  // A plain field rather than a constructor parameter property: this module is
+  // imported directly by gaze_check.mjs under Node's type stripping, which
+  // rejects parameter properties. Worth the two extra lines to have the test
+  // harness exercise this file instead of a copy of it that can drift.
+  private readonly alpha: number;
+
+  constructor(alpha = 0.25) {
+    this.alpha = alpha;
+  }
 
   push(next: GazeFeatures): GazeFeatures {
     if (!this.value) {

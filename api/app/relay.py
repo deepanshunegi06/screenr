@@ -21,6 +21,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from . import store
 from .auth import candidate_session_id
+from .config import get_settings
 from .deepgram_driver import AUDIO_INPUT_RATE, BOOTSTRAP, RECONNECT, DeepgramInterview
 from .diarize import SecondVoiceWatch
 
@@ -53,6 +54,11 @@ INTEGRITY_KINDS = {
     "camera_lost",
     "audio_device_changed",
 }
+
+# The subset that costs a warning. The rest are context for whoever reads the
+# scorecard -- pasting text or plugging in a monitor is worth knowing about, but
+# it is not the same as walking away from the interview.
+VIOLATION_KINDS = {"tab_hidden", "window_blur", "fullscreen_exit", "looking_away"}
 
 # A camera frame attached to a warning, as a data URL. Small on purpose: the
 # browser sends 320x240 JPEG, which is plenty to see who was in the chair and
@@ -244,13 +250,27 @@ async def _handle_browser_text(
 
     elif kind == "Integrity":
         flag_kind = str(payload.get("kind", ""))
-        if flag_kind in INTEGRITY_KINDS:
-            store.add_integrity_flag(
-                session,
-                flag_kind,
-                str(payload.get("detail", ""))[:200],
-                _decode_shot(payload.get("shot")),
-            )
+        if flag_kind not in INTEGRITY_KINDS:
+            return
+        store.add_integrity_flag(
+            session,
+            flag_kind,
+            str(payload.get("detail", ""))[:200],
+            _decode_shot(payload.get("shot")),
+        )
+        if flag_kind not in VIOLATION_KINDS:
+            return
+
+        # The browser counts warnings too, so the candidate sees one immediately,
+        # but the decision to end cannot live there. A socket that has quietly
+        # dropped makes the browser's "End" a no-op, and the interview stays open
+        # forever with the dashboard insisting it is still running -- which is
+        # exactly what happened. Counting from the stored flags also survives a
+        # reload, and cannot be edited away from the console.
+        spent = sum(1 for f in session.integrity if f.kind in VIOLATION_KINDS)
+        if spent >= get_settings().max_integrity_warnings:
+            await dg.request_end("removed")
+            await _send_safely(socket, {"type": "Finished", "reason": "removed"})
 
 
 @router.get("/interview/{token}/state")

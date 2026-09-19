@@ -586,3 +586,58 @@ def test_brevo_goes_first_because_it_can_reach_anyone(monkeypatch):
     )
     assert called == ["brevo"]
     get_settings.cache_clear()
+
+
+def test_the_server_ends_the_interview_at_the_warning_limit(auth):
+    """The browser counts warnings so the candidate sees one immediately, but the
+    decision to end cannot live there: a dropped socket made the browser's "End"
+    a silent no-op, leaving the interview open and the invite link reusable."""
+    import asyncio
+
+    from app import relay, store
+
+    res = client.post(
+        "/sessions", json={"candidateEmail": "warn@test.edu", "rubric": "backend_intern"}, headers=auth
+    )
+    session_id = res.json()["sessionId"]
+    session = store.get(session_id)
+    store.start(session)
+
+    ended: list[str] = []
+    sent: list[dict] = []
+
+    class FakeAgent:
+        open = True
+
+        async def request_end(self, reason: str) -> None:
+            ended.append(reason)
+            store.finish(session, reason)
+
+    class FakeSocket:
+        async def send_json(self, frame: dict) -> None:
+            sent.append(frame)
+
+    agent, socket = FakeAgent(), FakeSocket()
+
+    def report(kind: str) -> None:
+        frame = json.dumps({"type": "Integrity", "kind": kind, "detail": "went away"})
+        asyncio.run(relay._handle_browser_text(agent, session, frame, socket))
+
+    # Notes are recorded but cost nothing, however many of them arrive.
+    for _ in range(5):
+        report("paste")
+    assert ended == []
+    assert session.ctx.is_finished() is False
+
+    report("tab_hidden")
+    report("window_blur")
+    assert ended == []
+    report("looking_away")
+
+    assert ended == ["removed"]
+    assert session.ctx.stop_reason == "removed"
+    assert {"type": "Finished", "reason": "removed"} in sent
+    # And the link is spent: a reconnect sees a finished interview.
+    assert store.get(session_id).ctx.is_finished() is True
+
+    client.delete(f"/sessions/{session_id}", headers=auth)
