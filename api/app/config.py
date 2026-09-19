@@ -28,6 +28,9 @@ class Settings(BaseSettings):
 
     # Sending invites. Resend will only deliver to the account owner until a
     # domain is verified, so a send can legitimately fail on a working key.
+    # Brevo is the one that can do both: an HTTPS API a host cannot firewall off,
+    # and a single sender address verified by a code rather than by DNS.
+    brevo_api_key: str = ""
     resend_api_key: str = ""
     mail_from: str = "screenr <onboarding@resend.dev>"
     # Plain SMTP, used when smtp_user is set. Gmail with an app password needs no

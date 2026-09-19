@@ -519,3 +519,70 @@ def test_smtp_wins_when_it_is_configured(monkeypatch):
     with pytest.raises(ValueError, match="No mail is configured"):
         asyncio.run(mail.send_invite(to="c@test.edu", candidate="C", role="R", minutes=20, link="L"))
     get_settings.cache_clear()
+
+
+def test_a_blocked_smtp_port_falls_back_to_resend(monkeypatch):
+    """Railway blocks outbound 587. The button still has to work there."""
+    import asyncio
+
+    from app import mail
+    from app.config import get_settings
+
+    monkeypatch.setenv("SMTP_USER", "someone@gmail.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "app-password")
+    monkeypatch.setenv("RESEND_API_KEY", "re_key")
+    get_settings.cache_clear()
+
+    def blocked(*a, **k):
+        raise ValueError("Couldn't send through smtp.gmail.com: [Errno 101] Network is unreachable")
+
+    async def resend(to, subject, text, html):
+        return "resend_id"
+
+    monkeypatch.setattr(mail, "_smtp_blocked", False)
+    monkeypatch.setattr(mail, "_send_smtp", blocked)
+    monkeypatch.setattr(mail, "_send_resend", resend)
+    assert (
+        asyncio.run(mail.send_invite(to="c@test.edu", candidate="C", role="R", minutes=20, link="L"))
+        == "resend_id"
+    )
+    # An unreachable port stays unreachable, so the next send must not pay the
+    # connect timeout again.
+    assert mail._smtp_blocked is True
+
+    # With no fallback configured the real reason must surface, not a generic one.
+    monkeypatch.setattr(mail, "_smtp_blocked", False)
+    monkeypatch.delenv("RESEND_API_KEY")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="Network is unreachable"):
+        asyncio.run(mail.send_invite(to="c@test.edu", candidate="C", role="R", minutes=20, link="L"))
+    get_settings.cache_clear()
+
+
+def test_brevo_goes_first_because_it_can_reach_anyone(monkeypatch):
+    """Ordering is by reach: Brevo mails strangers over HTTPS, SMTP mails strangers
+    but gets firewalled, Resend only ever reaches the account owner."""
+    import asyncio
+
+    from app import mail
+    from app.config import get_settings
+
+    monkeypatch.setenv("BREVO_API_KEY", "xkeysib-test")
+    monkeypatch.setenv("SMTP_USER", "someone@gmail.com")
+    monkeypatch.setenv("RESEND_API_KEY", "re_key")
+    get_settings.cache_clear()
+
+    called = []
+
+    async def brevo(to, subject, text, html):
+        called.append("brevo")
+        return "brevo_id"
+
+    monkeypatch.setattr(mail, "_send_brevo", brevo)
+    monkeypatch.setattr(mail, "_send_smtp", lambda *a: called.append("smtp") or "smtp_id")
+    assert (
+        asyncio.run(mail.send_invite(to="c@test.edu", candidate="C", role="R", minutes=20, link="L"))
+        == "brevo_id"
+    )
+    assert called == ["brevo"]
+    get_settings.cache_clear()
