@@ -123,8 +123,25 @@ NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
 
 **Both, in containers:** `docker compose up` (reads `api/.env`).
 
-**A public URL for a demo:** `cloudflared tunnel --url http://localhost:8000` and
-again for `:3000`; set `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` to the two URLs.
+**Live:** [screenr-alpha.vercel.app](https://screenr-alpha.vercel.app) -- the web
+app on Vercel, the API on Railway behind a Docker build of `api/Dockerfile` with a
+volume mounted at `/app/data` for the database and the warning frames. Sign in
+with the demo button.
+
+`NEXT_PUBLIC_API_URL` is baked in at build time, so pointing the frontend at a
+different API is a redeploy rather than an env var change:
+
+```bash
+cd web && vercel env add NEXT_PUBLIC_API_URL production --value https://your-api --force --yes
+vercel deploy --prod --yes
+```
+
+**A throwaway public URL instead:** `cloudflared tunnel --url http://localhost:8000`
+and again for `:3000`; set `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` to the two URLs.
+
+**Demo data:** `python scripts/seed_demo.py --wipe` clears anything that looks like
+a test row and seeds four candidates with real resumes -- two strong, two vague --
+so `/compare` has something to separate.
 
 ## Interview yourself in the terminal
 
