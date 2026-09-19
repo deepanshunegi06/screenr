@@ -3,15 +3,25 @@
 A link a recruiter has to copy into their own mail client is a link half of them
 will forget to send. This puts the invite in the candidate's inbox.
 
-Resend refuses to send anywhere except the account owner's address until a
-domain is verified, so failures here are ordinary rather than exceptional. The
-reason comes straight back to the recruiter instead of being swallowed: "it
+Two ways out, because the obvious one has a catch. Resend will not deliver
+anywhere except the account owner's address until a domain is verified -- not a
+sender restriction, a recipient one -- so without a domain it can reach exactly
+one person. Plain SMTP has no such rule: a Gmail app password sends to anyone,
+from an address that already exists, with no DNS to configure.
+
+Whichever is configured, failures are ordinary rather than exceptional here, and
+the reason comes straight back to the recruiter instead of being swallowed. "It
 didn't arrive" is a much worse outcome than "it wasn't sent, here's why".
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import smtplib
+import ssl
+from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 
 import httpx
 
@@ -85,21 +95,62 @@ The link is yours alone — please don't forward it.</p>
 async def send_invite(
     *, to: str, candidate: str, role: str, minutes: int, link: str
 ) -> str:
-    """Send one invite. Returns the provider's message id.
+    """Send one invite. Returns a message id.
 
-    Raises ValueError carrying the provider's own explanation, which is usually
-    the actionable one -- an unverified domain, or a sandbox restriction.
+    SMTP wins when it is configured, because it is the one that can reach a real
+    candidate. Raises ValueError carrying the provider's own explanation, which
+    is usually the actionable one.
     """
     settings = get_settings()
-    if not settings.resend_api_key:
-        raise ValueError("RESEND_API_KEY is not set, so invites can't be emailed from here.")
+    subject = f"Your screening interview for {role}"
+    text = _text(candidate, role, minutes, link)
+    html = _html(candidate, role, minutes, link)
 
+    if settings.smtp_user:
+        return await asyncio.to_thread(_send_smtp, to, subject, text, html)
+    if settings.resend_api_key:
+        return await _send_resend(to, subject, text, html)
+    raise ValueError("No mail is configured: set SMTP_USER or RESEND_API_KEY.")
+
+
+def _send_smtp(to: str, subject: str, text: str, html: str) -> str:
+    """Blocking on purpose -- smtplib is, and it runs on a worker thread."""
+    settings = get_settings()
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    # The envelope sender has to be the authenticated account whatever MAIL_FROM
+    # says, or Gmail rewrites it and the display name is lost.
+    label = parseaddr(settings.mail_from)[0] or "screenr"
+    message["From"] = formataddr((label, settings.smtp_user))
+    message["To"] = to
+    message.set_content(text)
+    message.add_alternative(html, subtype="html")
+
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as server:
+            server.starttls(context=ssl.create_default_context())
+            server.login(settings.smtp_user, settings.smtp_password)
+            server.send_message(message)
+    except smtplib.SMTPAuthenticationError as exc:
+        raise ValueError(
+            "The mail server rejected those credentials. For Gmail this must be an "
+            "app password from myaccount.google.com/apppasswords, not the account password."
+        ) from exc
+    except (OSError, smtplib.SMTPException) as exc:
+        raise ValueError(f"Couldn't send through {settings.smtp_host}: {exc}") from exc
+
+    return f"smtp:{settings.smtp_user}"
+
+
+async def _send_resend(to: str, subject: str, text: str, html: str) -> str:
+    settings = get_settings()
     payload = {
         "from": settings.mail_from,
         "to": [to],
-        "subject": f"Your screening interview for {role}",
-        "text": _text(candidate, role, minutes, link),
-        "html": _html(candidate, role, minutes, link),
+        "subject": subject,
+        "text": text,
+        "html": html,
     }
     try:
         async with httpx.AsyncClient(timeout=20) as client:

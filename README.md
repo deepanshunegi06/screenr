@@ -106,7 +106,8 @@ cp env.example .env         # then fill in the keys below
 |---|---|
 | `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID` | voice interviews and per-interview cost |
 | `VOICE_THINK_PROVIDER`, `VOICE_THINK_MODEL` | the model Deepgram runs (`anthropic` / `claude-sonnet-5`) |
-| `RESEND_API_KEY`, `MAIL_FROM`, `WEB_ORIGIN` | emailing invites to candidates |
+| `SMTP_USER`, `SMTP_PASSWORD` *or* `RESEND_API_KEY` | emailing invites. SMTP wins when both are set, because it is the one that reaches anyone: Resend will not deliver past the account owner's own address until a domain is verified |
+| `MAIL_FROM`, `WEB_ORIGIN` | the sender label, and the origin an invite link points at |
 | `GROQ_API_KEY` *or* `GOOGLE_API_KEY` | the terminal interviewer and the free text eval sweep only. Everything the product does at runtime thinks through Deepgram |
 | `RECRUITER_EMAIL`, `RECRUITER_PASSWORD`, `JWT_SECRET` | the single recruiter account |
 | `DEMO_MODE=true` | a one-click demo sign-in that never exposes the password |

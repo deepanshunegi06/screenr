@@ -487,3 +487,35 @@ def test_the_invite_email_says_what_the_candidate_needs(auth):
     # The three things that change how a candidate prepares.
     assert "microphone" in body and "full screen" in body and "I don't know" in body
     assert "https://x/interview/tok" in _html("", "A role", 20, "https://x/interview/tok")
+
+
+def test_smtp_wins_when_it_is_configured(monkeypatch):
+    """SMTP is the one that can reach a real candidate, so it takes precedence."""
+    import asyncio
+
+    from app import mail
+    from app.config import get_settings
+
+    monkeypatch.setenv("SMTP_USER", "someone@gmail.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "app-password")
+    monkeypatch.setenv("RESEND_API_KEY", "re_also_set")
+    get_settings.cache_clear()
+
+    seen = {}
+    monkeypatch.setattr(
+        mail, "_send_smtp", lambda to, subject, text, html: seen.update(to=to, subject=subject) or "ok"
+    )
+    result = asyncio.run(
+        mail.send_invite(to="c@test.edu", candidate="C", role="Backend intern", minutes=20, link="L")
+    )
+    assert result == "ok"
+    assert seen["to"] == "c@test.edu"
+    assert seen["subject"] == "Your screening interview for Backend intern"
+
+    # With neither configured, say so rather than failing silently.
+    monkeypatch.delenv("SMTP_USER")
+    monkeypatch.delenv("RESEND_API_KEY")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="No mail is configured"):
+        asyncio.run(mail.send_invite(to="c@test.edu", candidate="C", role="R", minutes=20, link="L"))
+    get_settings.cache_clear()

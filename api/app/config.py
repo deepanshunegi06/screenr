@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # domain is verified, so a send can legitimately fail on a working key.
     resend_api_key: str = ""
     mail_from: str = "screenr <onboarding@resend.dev>"
+    # Plain SMTP, used when smtp_user is set. Gmail with an app password needs no
+    # domain of its own, which is the whole reason it is here.
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
     # Where an invite link points. The API cannot know the web origin otherwise.
     web_origin: str = "http://localhost:3000"
 
