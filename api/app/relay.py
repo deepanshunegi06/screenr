@@ -150,8 +150,19 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
         await dg.connect(resume=resuming)
     except Exception as exc:
         log.warning("deepgram connect failed for %s: %r", session.id, exc)
-        _LIVE.pop(session.id, None)
+        if _LIVE.get(session.id) is dg:
+            _LIVE.pop(session.id, None)
         await _reject(socket, "Voice isn't available right now. Try again in a moment.")
+        return
+
+    # connect() takes a Deepgram handshake to return, and a second tab arriving
+    # during that window evicts an agent that has no socket yet -- close() on it
+    # is a no-op, so it survives, unreachable from _LIVE and impossible to evict
+    # later. Two interviewers then write turns and evidence into one scorecard.
+    # Whoever was superseded while connecting hangs up on itself here.
+    if _LIVE.get(session.id) is not dg:
+        await dg.close()
+        await _reject(socket, "This interview was opened in another tab.")
         return
 
     # Fork the candidate's audio to a plain streaming transcriber whose only job
@@ -216,6 +227,13 @@ async def interview_socket(socket: WebSocket, token: str) -> None:
         pump.cancel()
         with contextlib.suppress(BaseException):
             await pump
+        # pump_done returns early when the task was cancelled, which is exactly
+        # the disconnect case -- so nothing finalised an interview the candidate
+        # simply walked away from. It stayed "in progress" with a duration that
+        # counted up forever, because duration_seconds() measures to now while
+        # ended_at is None.
+        if session.started and not session.ctx.is_finished():
+            store.finish(session, "incomplete")
         await dg.close()
         if diarizer:
             await diarizer.close()
@@ -250,7 +268,9 @@ async def _handle_browser_text(
 
     elif kind == "Integrity":
         flag_kind = str(payload.get("kind", ""))
-        if flag_kind not in INTEGRITY_KINDS:
+        # A browser that has been told the interview is over can keep the socket
+        # open and keep reporting. Nothing should land on a finished session.
+        if flag_kind not in INTEGRITY_KINDS or session.ctx.is_finished():
             return
         store.add_integrity_flag(
             session,

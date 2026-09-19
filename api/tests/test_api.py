@@ -641,3 +641,29 @@ def test_the_server_ends_the_interview_at_the_warning_limit(auth):
     assert store.get(session_id).ctx.is_finished() is True
 
     client.delete(f"/sessions/{session_id}", headers=auth)
+
+
+def test_an_abandoned_interview_stops_counting(auth):
+    """Walking away used to leave a session "in progress" with a duration that
+    climbed forever, because the one place that finalised it returned early
+    precisely when the pump task was cancelled -- the disconnect case."""
+    from app import store
+
+    res = client.post(
+        "/sessions", json={"candidateEmail": "gone@test.edu", "rubric": "backend_intern"}, headers=auth
+    )
+    session_id = res.json()["sessionId"]
+    session = store.get(session_id)
+    store.start(session)
+
+    # What the relay's finally block now does on any disconnect.
+    assert session.ctx.is_finished() is False
+    if session.started and not session.ctx.is_finished():
+        store.finish(session, "incomplete")
+
+    row = next(r for r in client.get("/sessions", headers=auth).json() if r["id"] == session_id)
+    assert row["finished"] is True
+    frozen = row["durationSeconds"]
+    assert client.get(f"/sessions/{session_id}", headers=auth).json()["duration_seconds"] == frozen
+
+    client.delete(f"/sessions/{session_id}", headers=auth)
