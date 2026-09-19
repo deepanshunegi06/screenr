@@ -246,20 +246,23 @@ const MAX_HEAD_RANGE = 40;
  */
 export function calibrationProblem(model: GazeModel | null): string | null {
   if (!model) return "Couldn't build a gaze model from those readings.";
-  if (model.headRange > MAX_HEAD_RANGE) {
-    return "Your head moved with your eyes, so the checks would be watching your head rather than your gaze. Try again, keeping your head still.";
-  }
-  if (
-    model.bounds.maxX - model.bounds.minX < MIN_SPAN ||
-    model.bounds.maxY - model.bounds.minY < MIN_SPAN
-  ) {
-    return "Your eyes barely moved between the dots, so there's nothing to tell looking-at-the-screen apart from looking away.";
-  }
-  if (model.quality > MAX_ERROR) {
-    return "The readings were too inconsistent to track your eyes reliably. Better light on your face usually fixes it.";
+  // Everything else that used to be rejected here is now accepted.
+  //
+  // The thresholds were set against a synthetic face and rejected the first real
+  // one twice over, which is the worst possible trade: a candidate who cannot
+  // get past calibration turns the camera off, and then nothing is watched at
+  // all. A mediocre model still notices a phone in someone's lap.
+  //
+  // The one case still refused is a model that cannot be built. A fit whose eyes
+  // never moved gets through and will be quiet -- that is a worse outcome than
+  // it sounds, but it is quieter than blocking someone's interview, and the
+  // panel tells them when the checks are not running.
+  if (model.bounds.maxX - model.bounds.minX < 1e-3 && model.bounds.maxY - model.bounds.minY < 1e-3) {
+    return "Your eyes didn't move at all between the dots, so there's nothing to measure.";
   }
   return null;
 }
+
 
 /** How far past the calibrated span an estimate must land before it counts as
  *  off-screen, as a fraction of that span. Generous, because the estimate itself
