@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui";
 import {
   averageFeatures,
+  calibrationProblem,
   fitGazeModel,
   judge,
   Smoother,
@@ -27,12 +28,25 @@ import type { GazeTracker } from "@/lib/proctor";
 
 export type GazeSetup = { model: GazeModel; neutral: GazeFeatures };
 
+/**
+ * A three-by-three grid, centre first.
+ *
+ * Five points on the two midlines only ever showed the fit one horizontal and
+ * one vertical sweep, which is barely more than the four free parameters it has
+ * to set -- hold one out to measure the fit honestly and there is nothing left.
+ * The corners are what make that measurement possible, and they are also where
+ * a phone or a second monitor actually sits.
+ */
 const POINTS: { at: ScreenPoint; label: string }[] = [
   { at: { sx: 0.5, sy: 0.5 }, label: "Look at the centre dot" },
   { at: { sx: 0.04, sy: 0.5 }, label: "Now the left edge" },
   { at: { sx: 0.96, sy: 0.5 }, label: "Now the right edge" },
   { at: { sx: 0.5, sy: 0.05 }, label: "Now the top" },
   { at: { sx: 0.5, sy: 0.95 }, label: "Now the bottom" },
+  { at: { sx: 0.04, sy: 0.05 }, label: "Top left corner" },
+  { at: { sx: 0.96, sy: 0.05 }, label: "Top right corner" },
+  { at: { sx: 0.04, sy: 0.95 }, label: "Bottom left corner" },
+  { at: { sx: 0.96, sy: 0.95 }, label: "Bottom right corner" },
 ];
 
 const SETTLE_MS = 800;
@@ -110,16 +124,22 @@ export function GazeCalibration({
       }
 
       const model = fitGazeModel(collected.current);
-      if (!model || model.quality > 0.45) {
-        setMessage(
-          model
-            ? "The readings were too inconsistent to track your eyes reliably."
-            : "Couldn't build a gaze model from those readings.",
-        );
+      const problem = calibrationProblem(model);
+      if (!model || problem) {
+        setMessage(problem ?? "Couldn't build a gaze model from those readings.");
         setPhase("failed");
         return;
       }
-      setup.current = { model, neutral: collected.current[0].features };
+      // Neutral is the head pose while looking at the centre of the screen,
+      // found by target rather than by position in the list so that reordering
+      // the grid cannot quietly make it the top-left corner instead.
+      const centre = collected.current.find((s) => s.target.sx === 0.5 && s.target.sy === 0.5);
+      if (!centre) {
+        setMessage("Couldn't build a gaze model from those readings.");
+        setPhase("failed");
+        return;
+      }
+      setup.current = { model, neutral: centre.features };
       setPhase("verify");
     };
 

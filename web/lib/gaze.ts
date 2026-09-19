@@ -12,8 +12,10 @@
  * within it, and a model given only the eyes has to explain head movement with
  * eye terms, which is what makes uncalibrated gaze so unstable.
  *
- * Ridge rather than plain least squares because five calibration points is very
+ * Ridge rather than plain least squares because nine calibration points is very
  * little data and the penalty is what stops one bad sample dominating the fit.
+ * The penalty is uneven across features, and that turns out to matter more than
+ * its size -- see RIDGE_HEAD.
  *
  * This produces a screen estimate accurate to a few centimetres at best. It is
  * used for one question only -- is the estimate well outside the screen -- and
@@ -40,9 +42,46 @@ export type ScreenPoint = { sx: number; sy: number };
  *  span the model actually produces is what makes the thresholds mean something. */
 export type GazeBounds = { minX: number; maxX: number; minY: number; maxY: number };
 
-export type GazeModel = { wx: number[]; wy: number[]; quality: number; bounds: GazeBounds };
+export type GazeModel = {
+  wx: number[];
+  wy: number[];
+  /** Leave-one-out mean error in screen widths. Held out, not in-sample: with
+   *  four parameters and a handful of points an in-sample number only says the
+   *  fit can reproduce what it was handed, which it always can. */
+  quality: number;
+  /** Degrees of head rotation the candidate used across the calibration points,
+   *  the larger of yaw range and pitch range. They were asked to hold still and
+   *  move only their eyes; how far they missed decides whether this model is
+   *  about their eyes at all. See `calibrationProblem`. */
+  headRange: number;
+  bounds: GazeBounds;
+};
 
 const RIDGE = 0.02;
+
+/**
+ * Head pose is penalised far harder than the irises, and this is the whole
+ * reason direction reporting used to change between runs.
+ *
+ * Where someone looks is head plus eyes, and for any one person those two move
+ * in near-lockstep across the calibration points -- the yaw column is close to a
+ * multiple of the iris columns. Collinear columns mean the fit is free to put
+ * the weight on either, and with an even penalty it puts it on whichever column
+ * is numerically larger. That is the head, by roughly ten to one. So a candidate
+ * who turned their head a little while calibrating got a model that had learned
+ * head pose and thrown the eyes away: it then scored a perfect in-sample fit,
+ * reported "turned" for everything, and missed a candidate reading a second
+ * monitor without moving their head at all.
+ *
+ * Penalising the head column expresses the prior the feature actually needs --
+ * the eyes do the explaining, head pose is a correction -- and makes the split
+ * deterministic instead of a function of how well the candidate sat still.
+ */
+const RIDGE_HEAD = 1.5;
+
+/** Bias is left unpenalised: shrinking it would drag every prediction toward
+ *  zero rather than toward the mean. */
+const PENALTY = [RIDGE, RIDGE, RIDGE_HEAD, 0];
 
 /** Design row for the horizontal fit: both eyes' horizontal offsets, head yaw,
  *  and a bias term. */
@@ -88,9 +127,7 @@ function ridgeFit(rows: number[][], targets: number[]): number[] | null {
       for (let j = 0; j < n; j++) xtx[i][j] += rows[s][i] * rows[s][j];
     }
   }
-  // Bias term is left unpenalised: shrinking it would drag every prediction
-  // toward zero rather than toward the mean.
-  for (let i = 0; i < n - 1; i++) xtx[i][i] += RIDGE;
+  for (let i = 0; i < n; i++) xtx[i][i] += PENALTY[i];
 
   return solve(xtx, xty);
 }
@@ -100,40 +137,116 @@ export function predict(model: GazeModel, features: GazeFeatures): ScreenPoint {
   return { sx: dot(model.wx, rowX(features)), sy: dot(model.wy, rowY(features)) };
 }
 
-/**
- * Fit from calibration samples.
- *
- * `quality` is the mean error, in screen widths, of the fitted model on the
- * points it was fitted to. Above roughly 0.25 the fit is not describing this
- * person's eyes and is better discarded than trusted -- but the caller is told,
- * rather than the whole feature failing quietly.
- */
-export function fitGazeModel(
-  samples: { features: GazeFeatures; target: ScreenPoint }[],
-): GazeModel | null {
-  if (samples.length < 4) return null;
+export type Sample = { features: GazeFeatures; target: ScreenPoint };
 
+function weights(samples: Sample[]): { wx: number[]; wy: number[] } | null {
   const wx = ridgeFit(samples.map((s) => rowX(s.features)), samples.map((s) => s.target.sx));
   const wy = ridgeFit(samples.map((s) => rowY(s.features)), samples.map((s) => s.target.sy));
   if (!wx || !wy || [...wx, ...wy].some((v) => !Number.isFinite(v))) return null;
+  return { wx, wy };
+}
+
+const range = (values: number[]) => Math.max(...values) - Math.min(...values);
+
+/**
+ * Fit from calibration samples.
+ *
+ * Returns null only when there is nothing to work with at all. Everything a
+ * caller might want to reject a fit over comes back as a number on the model
+ * and is judged in one place, `calibrationProblem` -- so a marginal calibration
+ * produces a sentence the candidate can act on instead of a silent null that
+ * used to switch the whole feature off while the interview carried on looking
+ * as though it were watching.
+ */
+export function fitGazeModel(samples: Sample[]): GazeModel | null {
+  // Leave-one-out needs the reduced fit to still be over-determined, and the
+  // grid has nine points, so this floor costs nothing real.
+  if (samples.length < 6) return null;
+
+  const fitted = weights(samples);
+  if (!fitted) return null;
 
   const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
-  const model: GazeModel = { wx, wy, quality: 0, bounds };
+  const model: GazeModel = {
+    ...fitted,
+    quality: Infinity,
+    headRange: Math.max(
+      range(samples.map((s) => s.features.yaw)),
+      range(samples.map((s) => s.features.pitch)),
+    ),
+    bounds,
+  };
 
-  const errors = samples.map((s) => {
+  for (const s of samples) {
     const p = predict(model, s.features);
     bounds.minX = Math.min(bounds.minX, p.sx);
     bounds.maxX = Math.max(bounds.maxX, p.sx);
     bounds.minY = Math.min(bounds.minY, p.sy);
     bounds.maxY = Math.max(bounds.maxY, p.sy);
-    return Math.hypot(p.sx - s.target.sx, p.sy - s.target.sy);
-  });
+  }
+
+  // Held-out error: refit without each point and see how far off that point
+  // lands. This is the number that notices a candidate who drifted, blinked
+  // through a capture, or glanced at the wrong dot -- the in-sample error it
+  // replaces was lowest for exactly the calibrations that turned out worst.
+  const errors: number[] = [];
+  for (let i = 0; i < samples.length; i++) {
+    const reduced = weights(samples.filter((_, j) => j !== i));
+    if (!reduced) continue;
+    const p = predict({ ...model, ...reduced }, samples[i].features);
+    errors.push(Math.hypot(p.sx - samples[i].target.sx, p.sy - samples[i].target.sy));
+  }
+  if (errors.length < samples.length - 1) return null;
   model.quality = errors.reduce((a, b) => a + b, 0) / errors.length;
 
-  // A model whose predictions barely move between "look left" and "look right"
-  // has not learned this person's eyes and must not be acted on.
-  if (bounds.maxX - bounds.minX < 0.15 || bounds.maxY - bounds.minY < 0.15) return null;
   return model;
+}
+
+/** How far the model's predictions must spread across the calibration points
+ *  before the difference between "look left" and "look right" is bigger than
+ *  the frame-to-frame noise. */
+const MIN_SPAN = 0.15;
+
+/** Held-out error past which the fit is not describing this person's eyes.
+ *  Roughly a third of the screen: beyond that the estimate cannot support a
+ *  claim about which side of the screen someone is looking at. */
+const MAX_ERROR = 0.32;
+
+/** Degrees of head rotation across the calibration points past which the
+ *  candidate was steering with their head, not their eyes. A compliant person
+ *  stays inside about five degrees; this is slack, because the cost of tripping
+ *  it is one repeated calibration.
+ *
+ *  It is the number most likely to need moving once real people hit it: someone
+ *  on a 27-inch monitor at arm's length cannot reach the corners with their eyes
+ *  alone, and will be sent round again. That is the right way to be wrong --
+ *  they are told why and can retry or decline -- but if it turns out to reject
+ *  honest candidates often, this is the knob, not the ridge. */
+const MAX_HEAD_RANGE = 18;
+
+/**
+ * The one place a calibration is accepted or rejected.
+ *
+ * Returns plain words for the candidate, or null if the model is good enough to
+ * act on. It is a sentence rather than a boolean because every one of these
+ * failures has a different fix, and "camera checks are off" with no reason is
+ * how the candidate ends up repeating whatever they did wrong.
+ */
+export function calibrationProblem(model: GazeModel | null): string | null {
+  if (!model) return "Couldn't build a gaze model from those readings.";
+  if (model.headRange > MAX_HEAD_RANGE) {
+    return "Your head moved with your eyes, so the checks would be watching your head rather than your gaze. Try again, keeping your head still.";
+  }
+  if (
+    model.bounds.maxX - model.bounds.minX < MIN_SPAN ||
+    model.bounds.maxY - model.bounds.minY < MIN_SPAN
+  ) {
+    return "Your eyes barely moved between the dots, so there's nothing to tell looking-at-the-screen apart from looking away.";
+  }
+  if (model.quality > MAX_ERROR) {
+    return "The readings were too inconsistent to track your eyes reliably. Better light on your face usually fixes it.";
+  }
+  return null;
 }
 
 /** How far past the calibrated span an estimate must land before it counts as
@@ -141,10 +254,21 @@ export function fitGazeModel(
  *  is good to a few centimetres at best. */
 const OVERSHOOT = 0.35;
 
-/** Head rotation this far past the calibrated neutral is off-screen regardless
- *  of what the regression says. It is the most reliable signal available. */
-const YAW_DEGREES = 25;
-const PITCH_DEGREES = 20;
+/**
+ * Head rotation past which the iris estimate stops meaning anything -- one eye
+ * is foreshortened into a sliver and the landmarks with it -- so the regression
+ * is not consulted and the verdict is simply "turned".
+ *
+ * This used to sit at 25 and 20 degrees, which is inside the range people use
+ * while still reading their own screen, and it short-circuited ahead of the
+ * regression. So a candidate who turns to think, or who has a wide monitor, was
+ * told they had looked away, and every genuine look-away by someone who moves
+ * their head at all was reported as "turned" with the direction thrown away.
+ * Between the old numbers and these, the regression now decides, which resolves
+ * the ambiguous middle in the candidate's favour.
+ */
+const YAW_DEGREES = 32;
+const PITCH_DEGREES = 25;
 
 export type GazeVerdict = {
   point: ScreenPoint;
@@ -167,14 +291,22 @@ export function judge(
   }
 
   const { minX, maxX, minY, maxY } = model.bounds;
-  const padX = (maxX - minX) * OVERSHOOT;
-  const padY = (maxY - minY) * OVERSHOOT;
+  const spanX = maxX - minX;
+  const spanY = maxY - minY;
 
-  if (point.sx < minX - padX) return { point, off: true, where: "left" };
-  if (point.sx > maxX + padX) return { point, off: true, where: "right" };
-  if (point.sy < minY - padY) return { point, off: true, where: "above" };
-  if (point.sy > maxY + padY) return { point, off: true, where: "below" };
-  return { point, off: false, where: null };
+  // How far outside the calibrated span the estimate landed on each axis, as a
+  // fraction of that span, so the two axes are comparable. Tested against each
+  // other rather than in a fixed order: the old code asked about x first and
+  // returned on the first hit, so someone looking at a phone in their lap and
+  // slightly to one side was reported as "left" rather than "below".
+  const overX = Math.max(minX - point.sx, point.sx - maxX) / spanX - OVERSHOOT;
+  const overY = Math.max(minY - point.sy, point.sy - maxY) / spanY - OVERSHOOT;
+
+  if (overX <= 0 && overY <= 0) return { point, off: false, where: null };
+  if (overX >= overY) {
+    return { point, off: true, where: point.sx < minX ? "left" : "right" };
+  }
+  return { point, off: true, where: point.sy < minY ? "above" : "below" };
 }
 
 /** Exponential smoothing. Raw per-frame estimates jitter by tens of percent of

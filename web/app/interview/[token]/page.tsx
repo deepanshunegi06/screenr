@@ -236,7 +236,7 @@ function Consent({
         <span className="text-[14px] text-fg">
           Camera checks during the interview.
           <span className="mt-0.5 block text-[12px] text-fg-3">
-            Optional. You&apos;ll look at four points first, so the checks know where your eyes sit.
+            Optional. You&apos;ll look at nine points first, so the checks know where your eyes sit.
             After that, looking away from the screen also costs a warning. Everything runs on your
             device, and nothing is recorded — but if a warning fires, the picture at that moment
             is saved for whoever reviews this. Declining is fine and changes nothing about your

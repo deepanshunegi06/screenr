@@ -54,6 +54,12 @@ export type ProctorStatus = {
   point: ScreenPoint | null;
   off: boolean;
   where: string | null;
+  /** False when calibration was skipped or rejected and gaze is not being
+   *  watched at all. Carried on every status rather than inferred from a null
+   *  point -- a null point also happens for a frame or two whenever the face
+   *  detector loses the landmarks, and an interview once ran start to finish
+   *  with gaze silently off while the panel showed a green dot. */
+  tracking: boolean;
 };
 
 type Point = { x: number; y: number; z?: number };
@@ -213,6 +219,7 @@ export function watchCamera(
   onStatus?: (status: ProctorStatus) => void,
 ): ProctorHandle {
   let stopped = false;
+  const tracking = gaze !== null;
   let absentSince = 0;
   let awaySince = 0;
   const smoother = new Smoother();
@@ -240,7 +247,7 @@ export function watchCamera(
       smoother.reset();
       if (!absentSince) absentSince = Date.now();
       const seconds = Math.round((Date.now() - absentSince) / 1000);
-      onStatus?.({ faces, point: null, off: false, where: null });
+      onStatus?.({ faces, point: null, off: false, where: null, tracking });
       if (seconds >= ABSENCE_SECONDS) report("no_face", `No one in frame for ${seconds}s`);
       return;
     }
@@ -249,18 +256,22 @@ export function watchCamera(
 
     if (faces > 1) {
       awaySince = 0;
-      onStatus?.({ faces, point: null, off: false, where: null });
+      smoother.reset();
+      onStatus?.({ faces, point: null, off: false, where: null, tracking });
       report("multiple_faces", `${faces} people in frame`);
       return;
     }
 
     if (!features || !gaze) {
-      onStatus?.({ faces, point: null, off: false, where: null });
+      // Resume from the next real frame rather than from whatever was last
+      // seen before the landmarks dropped out.
+      smoother.reset();
+      onStatus?.({ faces, point: null, off: false, where: null, tracking });
       return;
     }
 
     const verdict = judge(gaze.model, smoother.push(features), gaze.neutral);
-    onStatus?.({ faces, point: verdict.point, off: verdict.off, where: verdict.where });
+    onStatus?.({ faces, point: verdict.point, off: verdict.off, where: verdict.where, tracking });
 
     if (!verdict.off) {
       awaySince = 0;

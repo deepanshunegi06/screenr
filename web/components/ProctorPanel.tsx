@@ -44,7 +44,12 @@ export function ProctorPanel({
           ? { label: `Looking ${status.where ?? "away"}`, tone: "text-warn", dot: "bg-warn" }
           : status.point
             ? { label: "Looking at the screen", tone: "text-fg-2", dot: "bg-ok" }
-            : { label: "In frame", tone: "text-fg-2", dot: "bg-ok" };
+            : // Said outright rather than shown as a plain green "In frame",
+              // which is what let an interview run to the end with gaze checks
+              // off and nobody any the wiser.
+              !status.tracking
+              ? { label: "Eye checks off — in frame", tone: "text-fg-3", dot: "bg-fg-4" }
+              : { label: "In frame", tone: "text-fg-2", dot: "bg-ok" };
 
   return (
     <div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
@@ -95,6 +100,7 @@ export function ProctorPanel({
       )}
       <p className="sr-only">
         {warnings} of {maxWarnings} warnings used. Video stays on your device.
+        {status && !status.tracking && " Eye tracking is not running for this interview."}
       </p>
     </div>
   );
