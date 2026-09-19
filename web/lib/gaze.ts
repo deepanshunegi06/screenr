@@ -77,7 +77,7 @@ const RIDGE = 0.02;
  * the eyes do the explaining, head pose is a correction -- and makes the split
  * deterministic instead of a function of how well the candidate sat still.
  */
-const RIDGE_HEAD = 1.5;
+const RIDGE_HEAD = 0.35;
 
 /** Bias is left unpenalised: shrinking it would drag every prediction toward
  *  zero rather than toward the mean. */
@@ -204,25 +204,37 @@ export function fitGazeModel(samples: Sample[]): GazeModel | null {
 
 /** How far the model's predictions must spread across the calibration points
  *  before the difference between "look left" and "look right" is bigger than
- *  the frame-to-frame noise. */
-const MIN_SPAN = 0.15;
+ *  the frame-to-frame noise.
+ *
+ *  Tuned down hard after a real face hit it. Ridge shrinks predictions toward
+ *  the mean, so this span is much smaller than the screen even for a good fit,
+ *  and a synthetic candidate whose irises travel further than a real one's do
+ *  made the original number look reasonable. Rejecting an honest calibration
+ *  costs more than accepting a mediocre one: a mediocre model still catches a
+ *  candidate reading a phone in their lap, and a rejected one watches nothing. */
+const MIN_SPAN = 0.05;
 
 /** Held-out error past which the fit is not describing this person's eyes.
- *  Roughly a third of the screen: beyond that the estimate cannot support a
- *  claim about which side of the screen someone is looking at. */
-const MAX_ERROR = 0.32;
+ *
+ *  Loosened after a real calibration was rejected. A synthetic face is cleaner
+ *  than a real one and the original number was set against it, so this now sits
+ *  well clear of a good fit and only catches the genuinely broken -- a candidate
+ *  whose eyes never moved still scores past it. The consequence is that a
+ *  calibration with one bad dot is accepted rather than repeated: a slightly
+ *  wrong model still notices a phone in someone's lap, and a candidate sent
+ *  round the dots a third time gives up and turns the camera off instead. */
+const MAX_ERROR = 0.42;
 
 /** Degrees of head rotation across the calibration points past which the
  *  candidate was steering with their head, not their eyes. A compliant person
  *  stays inside about five degrees; this is slack, because the cost of tripping
  *  it is one repeated calibration.
  *
- *  It is the number most likely to need moving once real people hit it: someone
- *  on a 27-inch monitor at arm's length cannot reach the corners with their eyes
- *  alone, and will be sent round again. That is the right way to be wrong --
- *  they are told why and can retry or decline -- but if it turns out to reject
- *  honest candidates often, this is the knob, not the ridge. */
-const MAX_HEAD_RANGE = 18;
+ *  Real people hit the original eighteen degrees immediately -- nobody reaches
+ *  the corners of a real monitor with their eyes alone. It is slack now, and
+ *  catches only the candidate who barely moved their eyes at all, because the
+ *  per-column penalty already stops head pose from dominating the fit. */
+const MAX_HEAD_RANGE = 40;
 
 /**
  * The one place a calibration is accepted or rejected.
