@@ -202,40 +202,6 @@ export function fitGazeModel(samples: Sample[]): GazeModel | null {
   return model;
 }
 
-/** How far the model's predictions must spread across the calibration points
- *  before the difference between "look left" and "look right" is bigger than
- *  the frame-to-frame noise.
- *
- *  Tuned down hard after a real face hit it. Ridge shrinks predictions toward
- *  the mean, so this span is much smaller than the screen even for a good fit,
- *  and a synthetic candidate whose irises travel further than a real one's do
- *  made the original number look reasonable. Rejecting an honest calibration
- *  costs more than accepting a mediocre one: a mediocre model still catches a
- *  candidate reading a phone in their lap, and a rejected one watches nothing. */
-const MIN_SPAN = 0.05;
-
-/** Held-out error past which the fit is not describing this person's eyes.
- *
- *  Loosened after a real calibration was rejected. A synthetic face is cleaner
- *  than a real one and the original number was set against it, so this now sits
- *  well clear of a good fit and only catches the genuinely broken -- a candidate
- *  whose eyes never moved still scores past it. The consequence is that a
- *  calibration with one bad dot is accepted rather than repeated: a slightly
- *  wrong model still notices a phone in someone's lap, and a candidate sent
- *  round the dots a third time gives up and turns the camera off instead. */
-const MAX_ERROR = 0.42;
-
-/** Degrees of head rotation across the calibration points past which the
- *  candidate was steering with their head, not their eyes. A compliant person
- *  stays inside about five degrees; this is slack, because the cost of tripping
- *  it is one repeated calibration.
- *
- *  Real people hit the original eighteen degrees immediately -- nobody reaches
- *  the corners of a real monitor with their eyes alone. It is slack now, and
- *  catches only the candidate who barely moved their eyes at all, because the
- *  per-column penalty already stops head pose from dominating the fit. */
-const MAX_HEAD_RANGE = 40;
-
 /**
  * The one place a calibration is accepted or rejected.
  *

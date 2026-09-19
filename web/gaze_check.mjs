@@ -77,7 +77,10 @@ console.log("\ncalibration gate");
     // dominant even here, and real people move their heads more than the old
     // eighteen-degree gate allowed -- it rejected honest calibrations on sight.
     ["head doing most of the work", { headShare: 0.5 }, null],
-    ["head doing all of the work", { headShare: 0.95 }, "head"],
+    // Nothing is refused any more except a model that will not build at all.
+    // Blocking a real candidate from their interview was the worse failure by a
+    // distance -- they turn the camera off, and then nothing is watched.
+    ["head doing all of the work", { headShare: 0.95 }, null],
   ];
   for (const [label, opts, expect] of cases) {
     const model = calibrate(candidate(opts));
@@ -105,7 +108,9 @@ console.log("\ncalibration gate");
 
   // Staring straight ahead through the whole thing.
   const frozen = GRID.map(([sx, sy]) => ({ features: person(0.5, 0.5), target: { sx, sy } }));
-  check("eyes never moved", /barely moved/.test(calibrationProblem(fitGazeModel(frozen)) ?? ""), true);
+  // The only refusal left. Eyes that did not move produce a model with no span
+  // at all, and there is genuinely nothing to measure against.
+  check("eyes never moved", calibrationProblem(fitGazeModel(frozen)) !== null, true);
 
   check("too few points to hold one out", fitGazeModel(GRID.slice(0, 5).map(([sx, sy]) => ({
     features: person(sx, sy),
